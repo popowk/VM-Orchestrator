@@ -38,6 +38,7 @@ from .safety import assert_powered_off, assert_safe_vm_delete_dir, MAX_SNAPSHOTS
 from .unattend import provisioning_status, read_secret
 from .admin_auth import AdminAuth, AdminLoginLocked
 from .cleanup import CleanupManager, CleanupError
+from .host_control import HostControl, HostControlError
 from .host_metrics import read_host_metrics
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$')
@@ -165,7 +166,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     vmrun = vmrun or Vmrun(settings.vmrun_path)
     secret_root = settings.db_path.parent / 'provision-secrets'
     runner = JobRunner(store, vmrun, secret_root, settings.admin_key)
-    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.50',
+    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.53',
                   description='Local management of sealed templates and VMware Workstation VMs.')
 
     # UI session is an HttpOnly, SameSite=Strict cookie signed using a key derived
@@ -426,6 +427,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     system_updater = UpdateService(Path(__file__).resolve().parent.parent)
     cleanup_manager = CleanupManager(Path(__file__).resolve().parent.parent,
                                      vms_root, settings.db_path, store, fleet, vmrun)
+    host_control = HostControl(Path(__file__).resolve().parent.parent)
 
     class ApplySystemUpdate(BaseModel):
         version: str = Field(min_length=5, max_length=24)
@@ -453,6 +455,34 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         except UpdateError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+
+    @app.get('/api/system/host/status', dependencies=[Depends(authorized)])
+    def system_host_status():
+        return host_control.status()
+
+    @app.get('/api/system/host/logs', dependencies=[Depends(authorized)])
+    def system_host_logs():
+        return host_control.logs()
+
+    class RestartHostRequest(BaseModel):
+        confirm_restart: bool = False
+
+    @app.post('/api/system/host/restart', dependencies=[Depends(authorized)], status_code=202)
+    def system_host_restart(payload: RestartHostRequest, request: Request):
+        # This privileged operation must originate from a logged-in admin's
+        # browser with CSRF, not from a business/API-key integration.
+        if not verify_session(request):
+            raise HTTPException(403, '重启管理程序需要管理员网页登录')
+        if not payload.confirm_restart:
+            raise HTTPException(422, '请明确确认管理端将短暂断线')
+        if any(j.get('status') in ('QUEUED','RUNNING') for j in store.list_jobs(limit=100)):
+            raise HTTPException(409, '仍有 VM 管理任务在执行，暂不重启')
+        if system_updater._state_active():
+            raise HTTPException(409, '系统更新正在进行，不能同时重启管理程序')
+        try:
+            return host_control.restart()
+        except HostControlError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
 
     class CleanupDeleteRequest(BaseModel):
         items: list[dict] = Field(min_length=1, max_length=50)
