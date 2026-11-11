@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.51"></script>
+<script src="/ui/app-route-recover.js?v=1.4.53"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.51">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.53">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.51" defer></script>
+<script src="/ui/admin.js?v=1.4.53" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -55,6 +55,20 @@
         <div class="sys-progress" id="sysProgress" role="status" aria-live="polite">等待操作</div>
         <pre id="sysReleaseNotes" class="sys-release-notes" hidden></pre>
         <pre id="sysUpdateLogs" class="sys-release-notes" hidden></pre>
+      </section>
+      <section class="panel" id="hostControlPanel">
+        <div class="panel-head">
+          <div><h2>管理程序运行状态</h2><p>查看后台启动日志、异常输出及进程编号；只重启 VMO 管理服务，不关闭客户虚拟机。</p></div>
+          <span id="hostProcessBadge" class="pill">状态待确认</span>
+        </div>
+        <p id="hostProcessStatus" class="muted" role="status">正在读取后台服务状态…</p>
+        <div class="sys-actionbar">
+          <button type="button" class="btn ghost" id="hostStatusRefreshBtn">刷新运行状态</button>
+          <button type="button" class="btn ghost" id="hostLogsBtn">查看后台日志</button>
+          <button type="button" class="btn warn" id="hostRestartBtn">重启管理程序</button>
+        </div>
+        <p class="muted">后台日志位于 data/updates；如重启失败，使用本机启动脚本检查错误。没有“停止管理程序”入口。</p>
+        <pre id="hostRuntimeLogs" class="sys-release-notes" hidden></pre>
       </section>
       <section class="panel"><h2>自动更新安全机制</h2><div class="sys-feature-grid">
         <div><b>① 获取 Release</b><p>只读取配置仓库的稳定版本，不接受任意下载地址。</p></div>
