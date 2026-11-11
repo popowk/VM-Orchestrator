@@ -163,11 +163,11 @@ function Close-OrphanedVMOLaunchers {
             if (-not $proc) { continue }
             $line = [string]$item.CommandLine
             $titleMatch = ($proc.MainWindowTitle -eq 'VM Orchestrator - Unified Backend')
-            $scriptMatch = ($line -match '(?i)Start-VM-Orchestrator\\.cmd')
+            $scriptMatch = ($line -match '(?i)Start-VM-Orchestrator\.cmd')
             if (-not ($titleMatch -or $scriptMatch)) { continue }
             # For a launcher with an explicit path, it must reside below Target.
             if ($scriptMatch -and -not $titleMatch -and
-                $line -match '(?i)Start-VM-Orchestrator\\.cmd' -and
+                $line -match '(?i)Start-VM-Orchestrator\.cmd' -and
                 $line -match '(?i)[A-Z]:\\' -and
                 $line -notlike ('*' + $Target + '*')) { continue }
             Stop-Process -Id $id -Force -ErrorAction Stop
