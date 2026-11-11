@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.44 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.45 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';

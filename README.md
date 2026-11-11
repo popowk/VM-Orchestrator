@@ -1,4 +1,4 @@
-# VM Orchestrator — 功能总览（v1.4.44）
+# VM Orchestrator — 功能总览（v1.4.45）
 
 VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机运营管理系统。正式发布包仅包含运行程序与必要安装/运维脚本；此文件为唯一的产品说明。
 
@@ -42,3 +42,12 @@ VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机
 - 保留 Windows Host 与 Guest 的数据库、证书、DPAPI 密钥、客户身份与安装数据；代码升级不得覆盖它们。
 - 更新检查和 SHA-256 校验解决完整性与传输差错，不等同于签名验证；管理后台应限制管理员权限。
 - 目前发布包的语法、HTTP 和模拟场景可测试，但实际 VMware Workstation、思博环境、Windows 服务重启与回滚仍需在目标机器验收。
+
+
+### Windows updater reliability (v1.4.45)
+
+On Windows, the Host validates the copied updater using the local PowerShell
+parser, writes it as UTF-8 with BOM, then launches it with Unicode-safe
+parameters and a per-attempt startup acknowledgement. An upgrade from older
+versions whose launcher is already failing should use the standalone
+`Repair-Stuck-Update.ps1` recovery path once.

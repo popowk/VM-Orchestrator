@@ -22,6 +22,8 @@ jobs:
           set -euo pipefail
           v=$(tr -d '\r\n' < VERSION)
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+      - name: Compile Python source before release
+        run: python -m compileall -q app guest_agent
       - name: Build release ZIP and SHA-256
         run: python tools/build_release.py
       - name: Publish only a new release version

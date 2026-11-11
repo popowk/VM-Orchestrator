@@ -6,6 +6,7 @@ process exits; runtime data, secrets and VM directories never enter the ZIP.
 """
 from __future__ import annotations
 import hashlib
+import base64
 import json
 import uuid
 import tempfile
@@ -64,7 +65,7 @@ def _get(url: str, token: str, max_bytes: int, accept: str) -> bytes:
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != "api.github.com":
         raise UpdateError("更新请求只能连接 GitHub 官方 API")
-    headers = {"Accept": accept, "User-Agent": "VM-Orchestrator-Self-Updater/1.4.44",
+    headers = {"Accept": accept, "User-Agent": "VM-Orchestrator-Self-Updater/1.4.45",
                "X-GitHub-Api-Version": "2022-11-28"}
     if token:
         headers["Authorization"] = "Bearer " + token
@@ -391,34 +392,92 @@ class UpdateService:
             # replaced in-place during upgrade. Capture early parser/startup
             # errors even if the updater never reaches its own logger.
             runner = self.work / ("Apply-GitHubUpdate-v" + version + ".ps1")
-            shutil.copy2(script, runner)
+            # Windows PowerShell 5.1 treats UTF-8 without BOM as ANSI and
+            # can fail before the updater writes its first log entry.
+            try:
+                runner_code = script.read_bytes().decode("utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise UpdateError("PowerShell updater is not valid UTF-8") from exc
+            runner.write_bytes(bytes((0xEF, 0xBB, 0xBF)) + runner_code.encode("utf-8"))
             bootstrap_log = self.work / ("updater-bootstrap-" + attempt + ".log")
+            acknowledgement = self.work / ("updater-ack-" + attempt + ".txt")
+            try:
+                acknowledgement.unlink(missing_ok=True)
+            except OSError as exc:
+                raise UpdateError("Unable to reset updater acknowledgement") from exc
+
+            def ps_quote(value):
+                return "'" + str(value).replace("'", "''") + "'"
+
+            # Parse the exact copied file with the same Windows PowerShell 5.1
+            # executable BEFORE stopping the service. This detects encoding
+            # and tokenization errors without changing any VMO runtime files.
+            syntax_check = (
+                "$t=$null;$e=$null;"
+                "[System.Management.Automation.Language.Parser]::ParseFile("
+                + ps_quote(runner) + ",[ref]$t,[ref]$e)|Out-Null;"
+                "if($e.Count){$e|ForEach-Object{$_.Message|Write-Output};exit 2};exit 0"
+            )
+            syntax_cmd = ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                          "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+                          base64.b64encode(syntax_check.encode("utf-16le")).decode("ascii")]
+            try:
+                syntax_result = subprocess.run(
+                    syntax_cmd, cwd=str(self.project_root), stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20,
+                    creationflags=subprocess.CREATE_NO_WINDOW, check=False
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise UpdateError("PowerShell preflight failed to launch") from exc
+            if syntax_result.returncode != 0:
+                bootstrap_log.write_bytes((syntax_result.stdout or b"")[-4000:])
+                raise UpdateError("PowerShell syntax preflight failed; check updater bootstrap log")
+
+            # -EncodedCommand is Unicode-safe and writes a durable ACK before
+            # invoking the updater. CREATE_NO_WINDOW instead of DETACHED_PROCESS
+            # preserves reliable stdio/exit-code behavior on Windows.
+            encoded_bootstrap = (
+                "$ErrorActionPreference='Stop';"
+                "[IO.File]::WriteAllText("
+                + ps_quote(acknowledgement) + ",[string]$PID,[Text.Encoding]::ASCII);"
+                "& " + ps_quote(runner)
+                + " -ZipPath " + ps_quote(zip_path)
+                + " -ExpectedSha256 " + ps_quote(expected_hash)
+                + " -Target " + ps_quote(self.project_root)
+                + " -HostPid " + str(os.getpid())
+                + " -Version " + ps_quote(version)
+                + " -Attempt " + ps_quote(attempt)
+                + ";if(-not $?) {exit 1}"
+            )
             cmd = ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
-                   "-ExecutionPolicy", "Bypass", "-File", str(runner),
-                   "-ZipPath", str(zip_path), "-ExpectedSha256", expected_hash,
-                   "-Target", str(self.project_root), "-HostPid", str(os.getpid()),
-                   "-Version", version, "-Attempt", attempt]
+                   "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+                   base64.b64encode(encoded_bootstrap.encode("utf-16le")).decode("ascii")]
             self._state(state="handoff", version=version, mode="restart", attempt=attempt,
-                        message="已校验更新包，正在启动独立 PowerShell 更新程序")
+                        message="已通过 PowerShell 语法预检，等待独立更新进程接管")
             with open(bootstrap_log, "wb", buffering=0) as log:
-                proc = subprocess.Popen(cmd, cwd=str(self.project_root),
-                                        stdin=subprocess.DEVNULL, stdout=log,
-                                        stderr=subprocess.STDOUT, close_fds=True,
-                                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP |
-                                        subprocess.DETACHED_PROCESS)
-            # Check for immediate PowerShell parser/bootstrap failure, without
-            # clobbering a newer status written by the detached updater.
-            time.sleep(2)
-            if proc.poll() is not None and proc.returncode != 0:
+                proc = subprocess.Popen(
+                    cmd, cwd=str(self.project_root), stdin=subprocess.DEVNULL,
+                    stdout=log, stderr=subprocess.STDOUT, close_fds=True,
+                    creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP |
+                                   subprocess.CREATE_NO_WINDOW)
+                )
+            # If the child exits before writing ACK, show a definite error;
+            # do not misrepresent an old updater.log as evidence of success.
+            for _ in range(30):
+                if acknowledgement.is_file() or proc.poll() is not None:
+                    break
+                time.sleep(0.2)
+            if not acknowledgement.is_file() and proc.poll() is not None:
                 try:
                     last = json.loads(self.status_file.read_text(encoding="utf-8-sig"))
                 except (OSError, ValueError):
                     last = {}
                 if last.get("attempt") == attempt and last.get("state") == "handoff":
-                    self._state(state="failed", version=version, mode="restart", attempt=attempt,
-                                message="PowerShell 启动后立即退出；请查看本次 updater-bootstrap 日志")
-            # After spawn the detached updater owns its status; do not write
-            # another 'handoff' which could overwrite 'preparing' or 'success'.
+                    self._state(state="failed", version=version, mode="restart",
+                                attempt=attempt,
+                                message="PowerShell exited before startup acknowledgement; check this attempt's bootstrap log")
+            # Once ACK exists, the independent process owns the update. No
+            # further writes here may overwrite preparing/success/rollback.
         except Exception as exc:
             # Never clobber a detached updater's definitive state.
             try:
