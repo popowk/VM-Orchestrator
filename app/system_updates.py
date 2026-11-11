@@ -6,7 +6,6 @@ process exits; runtime data, secrets and VM directories never enter the ZIP.
 """
 from __future__ import annotations
 import hashlib
-import base64
 import json
 import uuid
 import tempfile
@@ -420,61 +419,61 @@ class UpdateService:
             except OSError as exc:
                 raise UpdateError("Unable to reset updater acknowledgement") from exc
 
-            def ps_quote(value):
-                return "'" + str(value).replace("'", "''") + "'"
-
-            # Parse the exact copied file with the same Windows PowerShell 5.1
-            # executable BEFORE stopping the service. This detects encoding
-            # and tokenization errors without changing any VMO runtime files.
-            syntax_check = (
-                "$t=$null;$e=$null;"
-                "[System.Management.Automation.Language.Parser]::ParseFile("
-                + ps_quote(runner) + ",[ref]$t,[ref]$e)|Out-Null;"
-                "if($e.Count){$e|ForEach-Object{$_.Message|Write-Output};exit 2};exit 0"
-            )
-            syntax_cmd = ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
-                          "-ExecutionPolicy", "Bypass", "-EncodedCommand",
-                          base64.b64encode(syntax_check.encode("utf-16le")).decode("ascii")]
+            # Use standard, inspectable script-file invocation instead of
+            # an encoded command. Endpoint-security policies can explicitly
+            # audit/approve the VMO helper and updater by their file paths.
+            # Do not disable security products or alter their trust settings.
+            preflight = self.project_root / "scripts" / "host" / "Test-GitHubUpdate.ps1"
+            if not preflight.is_file():
+                raise UpdateError("缺少本地 PowerShell 预检脚本；未停止 Host")
+            syntax_cmd = [
+                "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "RemoteSigned", "-File", str(preflight),
+                "-UpdaterPath", str(runner),
+            ]
             try:
                 syntax_result = subprocess.run(
                     syntax_cmd, cwd=str(self.project_root), stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20,
                     creationflags=subprocess.CREATE_NO_WINDOW, check=False
                 )
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                raise UpdateError("PowerShell preflight failed to launch") from exc
+            except subprocess.TimeoutExpired as exc:
+                raise UpdateError("PowerShell 预检超时；请检查火绒防护日志或终端策略（Host 未停止）") from exc
+            except OSError as exc:
+                code = getattr(exc, "winerror", None)
+                suffix = "（Windows 错误码 " + str(code) + "）" if code else ""
+                raise UpdateError("Windows 未允许启动 PowerShell 预检" + suffix +
+                                  "；请核对火绒拦截记录（Host 未停止）") from exc
             if syntax_result.returncode != 0:
                 bootstrap_log.write_bytes((syntax_result.stdout or b"")[-4000:])
-                raise UpdateError("PowerShell syntax preflight failed; check updater bootstrap log")
+                raise UpdateError(
+                    "PowerShell 预检失败（返回码 " + str(syntax_result.returncode) +
+                    "）；请检查本次 bootstrap 日志和火绒拦截记录（Host 未停止）")
 
-            # -EncodedCommand is Unicode-safe and writes a durable ACK before
-            # invoking the updater. CREATE_NO_WINDOW instead of DETACHED_PROCESS
-            # preserves reliable stdio/exit-code behavior on Windows.
-            encoded_bootstrap = (
-                "$ErrorActionPreference='Stop';"
-                "[IO.File]::WriteAllText("
-                + ps_quote(acknowledgement) + ",[string]$PID,[Text.Encoding]::ASCII);"
-                "& " + ps_quote(runner)
-                + " -ZipPath " + ps_quote(zip_path)
-                + " -ExpectedSha256 " + ps_quote(expected_hash)
-                + " -Target " + ps_quote(self.project_root)
-                + " -HostPid " + str(os.getpid())
-                + " -Version " + ps_quote(version)
-                + " -Attempt " + ps_quote(attempt)
-                + ";if(-not $?) {exit 1}"
-            )
-            cmd = ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
-                   "-ExecutionPolicy", "Bypass", "-EncodedCommand",
-                   base64.b64encode(encoded_bootstrap.encode("utf-16le")).decode("ascii")]
+            # Detached updater creates its own ACK immediately on startup;
+            # no wrapper, hidden expression or encoded bootstrap is needed.
+            cmd = [
+                "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "RemoteSigned", "-File", str(runner),
+                "-ZipPath", str(zip_path), "-ExpectedSha256", str(expected_hash),
+                "-Target", str(self.project_root), "-HostPid", str(os.getpid()),
+                "-Version", str(version), "-Attempt", str(attempt),
+            ]
             self._state(state="handoff", version=version, mode="restart", attempt=attempt,
                         message="已通过 PowerShell 语法预检，等待独立更新进程接管")
             with open(bootstrap_log, "wb", buffering=0) as log:
-                proc = subprocess.Popen(
-                    cmd, cwd=str(self.project_root), stdin=subprocess.DEVNULL,
-                    stdout=log, stderr=subprocess.STDOUT, close_fds=True,
-                    creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP |
-                                   subprocess.CREATE_NO_WINDOW)
-                )
+                try:
+                    proc = subprocess.Popen(
+                        cmd, cwd=str(self.project_root), stdin=subprocess.DEVNULL,
+                        stdout=log, stderr=subprocess.STDOUT, close_fds=True,
+                        creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP |
+                                       subprocess.CREATE_NO_WINDOW)
+                    )
+                except OSError as exc:
+                    code = getattr(exc, "winerror", None)
+                    suffix = "（Windows 错误码 " + str(code) + "）" if code else ""
+                    raise UpdateError("Windows 未允许启动独立更新进程" + suffix +
+                                      "；请检查火绒拦截日志（Host 未停止）") from exc
             # If the child exits before writing ACK, show a definite error;
             # do not misrepresent an old updater.log as evidence of success.
             for _ in range(30):

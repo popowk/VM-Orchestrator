@@ -15,6 +15,11 @@ $stateDir = Join-Path $Target 'data\updates'
 $statePath = Join-Path $stateDir 'status.json'
 if (-not $Attempt) { $Attempt = [guid]::NewGuid().ToString('N') }
 if ($Attempt -notmatch '^[0-9a-fA-F]{32}$') { throw 'Invalid update attempt identifier' }
+# Positive evidence that PowerShell successfully started this exact script.
+# Created by the verified updater itself, not by an encoded wrapper command.
+New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+$ackFile = Join-Path $stateDir ('updater-ack-' + $Attempt + '.txt')
+[IO.File]::WriteAllText($ackFile, [string]$PID, [Text.Encoding]::ASCII)
 $logFile = Join-Path $stateDir ('updater-' + $Attempt + '.log')
 $folders = @('app','guest_agent','scripts','integrations','docs')
 $rootFiles = @('VERSION','Install-All.cmd','Install-All.ps1','Start-VM-Orchestrator.cmd',
@@ -24,9 +29,8 @@ $backupDir = $null
 $switched = $false
 $stoppedOld = $false
 $oldVersion = $null
-# The detached updater must acknowledge its startup BEFORE attempting any
-# archive extraction or process termination. This also makes parser errors
-# visible in updater-bootstrap.log (stdout/stderr of powershell.exe).
+# The detached updater acknowledges startup BEFORE checksum verification or
+# process termination. Parser/launch failures remain in updater-bootstrap.log.
 
 function Log([string]$message) {
     $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $message
