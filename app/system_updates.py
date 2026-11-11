@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import re
 import subprocess
@@ -21,7 +22,8 @@ import zipfile
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
 VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 MAX_PACKAGE = 30 * 1024 * 1024
-STATES = {"downloading", "verified", "applying", "restarting"}
+STATES = {"downloading", "verified", "handoff", "preparing", "stopping", "backing_up", "applying", "restarting"}
+HANDOFF_TIMEOUT_SECONDS = 90
 
 
 class UpdateError(RuntimeError):
@@ -58,7 +60,7 @@ def _get(url: str, token: str, max_bytes: int, accept: str) -> bytes:
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != "api.github.com":
         raise UpdateError("更新请求只能连接 GitHub 官方 API")
-    headers = {"Accept": accept, "User-Agent": "VM-Orchestrator-Self-Updater/1.4.40",
+    headers = {"Accept": accept, "User-Agent": "VM-Orchestrator-Self-Updater/1.4.41",
                "X-GitHub-Api-Version": "2022-11-28"}
     if token:
         headers["Authorization"] = "Bearer " + token
@@ -109,9 +111,38 @@ class UpdateService:
             details = json.loads(self.status_file.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             pass
-        details = {k: details.get(k) for k in ("state", "at", "version", "message", "backup") if k in details}
+        # An independent PowerShell child can fail before writing its first log.
+        # Surface an actionable diagnostic rather than an eternal "applying" banner.
+        if details.get("state") == "handoff":
+            try:
+                age = time.time() - self.status_file.stat().st_mtime
+                if age > HANDOFF_TIMEOUT_SECONDS:
+                    details = {**details, "state": "failed",
+                               "message": "独立更新程序未在90秒内确认启动；查看 data/updates/updater.log 和 updater-bootstrap.log，然后使用修复工具"}
+            except OSError:
+                pass
+        details = {k: details.get(k) for k in ("state", "at", "version", "message", "backup", "pid") if k in details}
         return {"current": self.current, "repository": self.repo, "configured_token": bool(self.token),
                 "update": details, "latest": (self._release or {}).get("tag_name")}
+
+    def diagnostics(self):
+        """Read only the updater's own short local logs, never a VM/customer log."""
+        out = {}
+        for name in ("updater.log", "updater-bootstrap.log"):
+            path = self.work / name
+            try:
+                # Binary mode + tail avoids loading an arbitrarily growing log.
+                with path.open("rb") as f:
+                    f.seek(0, 2)
+                    f.seek(max(0, f.tell() - 12000))
+                    value = f.read().decode("utf-8-sig", "replace")[-8000:]
+                # Protect against access token formats entering log by mistake.
+                value = re.sub(r"(?i)(bearer\s+)[^\s]+", r"\1[REDACTED]", value)
+                value = re.sub(r"(?:ghp_|github_pat_)[A-Za-z0-9_]{10,}", "[REDACTED]", value)
+                out[name] = value
+            except OSError:
+                out[name] = "（尚无记录：独立更新器可能没有成功启动）"
+        return {"logs": out}
 
     def _latest(self):
         url = f"https://api.github.com/repos/{self.repo}/releases/latest"
@@ -165,7 +196,10 @@ class UpdateService:
             # A crashed updater should not lock out a machine forever.
             if data.get("state") not in STATES:
                 return False
-            return time.time() - self.status_file.stat().st_mtime < 20 * 60
+            age = time.time() - self.status_file.stat().st_mtime
+            if data.get("state") == "handoff" and age > HANDOFF_TIMEOUT_SECONDS:
+                return False
+            return age < 30 * 60
         except (OSError, ValueError):
             return False
 
@@ -219,17 +253,30 @@ class UpdateService:
             if not script.is_file():
                 raise UpdateError("缺少 Windows 自更新脚本")
             self._state(state="verified", version=version, message="完整性校验通过，正在准备更新")
-            kwargs = {"cwd": str(self.project_root), "close_fds": True,
-                      "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS}
-            # Write the hand-off state BEFORE spawning the detached updater.
-            # Otherwise a fast child can finish and write 'success', then the
-            # parent would incorrectly overwrite it with 'applying'.
-            self._state(state="applying", version=version, message="即将由独立更新程序接管；管理端将短暂断开")
-            subprocess.Popen(["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
-                "-ExecutionPolicy", "Bypass", "-File", str(script),
-                "-ZipPath", str(zip_path), "-ExpectedSha256", expected_hash,
-                "-Target", str(self.project_root), "-HostPid", str(os.getpid()),
-                "-Version", version], **kwargs)
+            # PowerShell must run OUTSIDE scripts/, because that directory is
+            # replaced in-place during upgrade. Capture early parser/startup
+            # errors even if the updater never reaches its own logger.
+            runner = self.work / ("Apply-GitHubUpdate-v" + version + ".ps1")
+            shutil.copy2(script, runner)
+            bootstrap_log = self.work / "updater-bootstrap.log"
+            cmd = ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                   "-ExecutionPolicy", "Bypass", "-File", str(runner),
+                   "-ZipPath", str(zip_path), "-ExpectedSha256", expected_hash,
+                   "-Target", str(self.project_root), "-HostPid", str(os.getpid()),
+                   "-Version", version]
+            self._state(state="handoff", version=version,
+                        message="已校验更新包，正在启动独立 PowerShell 更新程序")
+            with open(bootstrap_log, "ab", buffering=0) as log:
+                proc = subprocess.Popen(cmd, cwd=str(self.project_root),
+                                        stdin=subprocess.DEVNULL, stdout=log,
+                                        stderr=subprocess.STDOUT, close_fds=True,
+                                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP |
+                                        subprocess.DETACHED_PROCESS)
+            # A successful spawn is not proof of installation. The independent
+            # updater immediately writes its own 'preparing' state and log.
+            # Do not overwrite that state after Popen: it might be 'success'.
+            if proc.poll() is not None and proc.returncode != 0:
+                raise UpdateError("独立更新程序启动后立即退出，请查看 updater-bootstrap.log")
         except Exception as exc:
             # Never expose GitHub token, URLs with query strings, or stack traces.
             self._state(state="failed", version=expected_version, message=str(exc)[:250])

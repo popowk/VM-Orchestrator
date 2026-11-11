@@ -1,4 +1,4 @@
-﻿# Optional one-time config. Default 192.168.2.99:8766 requires no action.
+# Optional one-time config. Default 192.168.2.99:8766 requires no action.
 param([string]$ListenIp='192.168.2.99', [string]$GuestSubnet='192.168.50.0/24')
 $ErrorActionPreference='Stop'
 $project=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path

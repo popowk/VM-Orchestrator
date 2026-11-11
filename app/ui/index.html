@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.40"></script>
+<script src="/ui/app-route-recover.js?v=1.4.41"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.40">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.41">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.40" defer></script>
+<script src="/ui/admin.js?v=1.4.41" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -50,9 +50,10 @@
         <div class="panel-head"><div><h2>版本检查与安装</h2><p>安装前暂停新的操作，存在运行中 VM 管理任务时不会执行更新。更新期间控制台会暂时断线。</p></div></div>
         <div class="sys-actionbar"><button type="button" class="btn ghost" id="sysCheckBtn">检查更新</button>
         <button type="button" class="btn primary" id="sysInstallBtn">一键获取并更新</button>
-        <span class="pill" id="sysUpdateBadge">未检查</span></div>
+        <span class="pill" id="sysUpdateBadge">未检查</span> <button type="button" class="btn ghost" id="sysLogBtn">查看更新日志</button></div>
         <div class="sys-progress" id="sysProgress" role="status" aria-live="polite">等待操作</div>
         <pre id="sysReleaseNotes" class="sys-release-notes" hidden></pre>
+        <pre id="sysUpdateLogs" class="sys-release-notes" hidden></pre>
       </section>
       <section class="panel"><h2>自动更新安全机制</h2><div class="sys-feature-grid">
         <div><b>① 获取 Release</b><p>只读取配置仓库的稳定版本，不接受任意下载地址。</p></div>

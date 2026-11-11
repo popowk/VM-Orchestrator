@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.40 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.41 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -1184,7 +1184,7 @@ window.VMOSelfService=(()=>{
 
 /* ===== System update — host self-update, NOT Guest software updates ===== */
 (() => {
- let latest='', available=false, busy=false, timer=null;
+ let latest='', available=false, busy=false, timer=null, offlinePolls=0;
  const setText=(id,value)=>{const node=document.getElementById(id);if(node)node.textContent=String(value??'—');};
  function buttonState(){const install=document.getElementById('sysInstallBtn');if(install)install.disabled=busy;const check=document.getElementById('sysCheckBtn');if(check)check.disabled=busy;}
  async function load(){
@@ -1195,16 +1195,16 @@ window.VMOSelfService=(()=>{
    setText('sysCurrentVersion','v'+data.current);setText('sysRepo',data.repository);
    setText('sysAuth',data.configured_token?'已配置私有仓库令牌':'无令牌：只可访问公开的 Releases');
    const update=data.update||{};
-   const names={idle:'未开始',downloading:'下载中',verified:'校验通过',applying:'正在替换程序并重启',success:'已完成',failed:'更新失败',rolled_back:'已回滚'};
+   const names={idle:'未开始',downloading:'下载中',verified:'校验通过',handoff:'启动独立更新器',preparing:'独立更新器已启动',stopping:'停止旧版服务',backing_up:'备份旧版程序',applying:'正在替换程序',restarting:'重新启动',success:'已完成',failed:'更新失败',rolled_back:'已回滚'};
    setText('sysProgress',(names[update.state]||update.state||'未开始')+' · '+(update.message||'等待操作'));
-   if(['downloading','verified','applying'].includes(update.state)){
+   if(['downloading','verified','handoff','preparing','stopping','backing_up','applying','restarting'].includes(update.state)){
      busy=true;buttonState(); if(!timer)timer=setInterval(poll,2500);
    } else {
      busy=false;buttonState();if(timer){clearInterval(timer);timer=null;}
    }
  }
  async function poll(){if(state.activePage!=='system'){clearInterval(timer);timer=null;return;}
-  try{show(await request('/api/system/update'));}catch(e){setText('sysProgress','服务可能正在重启，等待重新连接…');}
+  try{show(await request('/api/system/update'));offlinePolls=0;}catch(e){offlinePolls++;setText('sysProgress',offlinePolls>12?'管理端已离线超过30秒。若未自动恢复，请查看 data/updates/updater.log 和 updater-bootstrap.log，并运行修复工具。':'服务暂时离线，正在等待更新器重启管理端…');}
  }
  async function check(){
   if(busy)return;setText('sysUpdateBadge','检查中');setText('sysProgress','正在连接 GitHub Releases…');
@@ -1230,6 +1230,16 @@ window.VMOSelfService=(()=>{
  }
  window.VMOSystemUpdate={load,check};
  window.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('sysLogBtn')?.addEventListener('click',async()=>{
+    const pre=document.getElementById('sysUpdateLogs');
+    if(!pre)return;
+    pre.hidden=false;pre.textContent='正在获取更新器日志…';
+    try{
+      const data=await request('/api/system/update/log');
+      pre.textContent=Object.entries(data.logs||{}).map(([name,content])=>
+        '--- '+name+' ---\n'+content).join('\n\n');
+    }catch(e){pre.textContent='无法读取日志：'+e.message;}
+  });
   document.getElementById('sysCheckBtn')?.addEventListener('click',check);
   document.getElementById('sysInstallBtn')?.addEventListener('click',install);
  });

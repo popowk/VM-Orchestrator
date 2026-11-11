@@ -20,6 +20,9 @@ $backupDir = $null
 $switched = $false
 $stoppedOld = $false
 $oldVersion = $null
+# The detached updater must acknowledge its startup BEFORE attempting any
+# archive extraction or process termination. This also makes parser errors
+# visible in updater-bootstrap.log (stdout/stderr of powershell.exe).
 
 function Log([string]$message) {
     $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $message
@@ -89,6 +92,7 @@ try {
     $actual = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $ExpectedSha256.ToLowerInvariant()) { throw 'SHA256 verification failed' }
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    Write-State 'preparing' ('独立更新进程已启动 (PID ' + $PID + ')，正在验证安装包')
     $staging = Join-Path $stateDir ('unpacked-v' + $Version)
     if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
@@ -117,7 +121,7 @@ try {
     }
     # Leave the HTTP request sufficient time to receive the accepted response.
     Start-Sleep -Seconds 4
-    Write-State 'applying' '版本包已解压校验，正在停止旧版服务'
+    Write-State 'stopping' '版本包已解压校验，正在安全停止旧版服务'
     $hostProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$HostPid" -ErrorAction SilentlyContinue
     if ($hostProcess -and ($hostProcess.Name -notmatch '^python(w)?\.exe$' -or
                           $hostProcess.CommandLine -notmatch 'app\.unified_server')) {
@@ -133,6 +137,7 @@ try {
             throw "Port $port is still occupied, refusing to replace a running service"
         }
     }
+    Write-State 'backing_up' '端口已释放，开始备份旧版程序'
     $oldVersion = (Get-Content -LiteralPath (Join-Path $Target 'VERSION') -Raw).Trim()
     $backupDir = Join-Path $stateDir ('backups\before-v' + $Version + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     $backupCode = Join-Path $backupDir 'code'
@@ -154,6 +159,7 @@ try {
     Replace-Code $source
     # Unlike a new system install, never initialize accounts, rotate keys,
     # touch the database, or run Sysprep/Guest provisioning here.
+    Write-State 'applying' '文件已替换，正在校验和安装所需依赖'
     $deps = Join-Path $Target 'scripts\host\Install-HostPythonDeps.ps1'
     & $deps *> (Join-Path $stateDir 'dependencies.log')
     if ($LASTEXITCODE -ne 0) { throw 'Python dependency installation failed' }
@@ -163,7 +169,9 @@ try {
     Write-State 'success' 'GitHub 更新成功，双端口统一服务已启动'
 } catch {
     $errorMessage = $_.Exception.Message
-    Log ('ERROR: ' + $errorMessage)
+    try { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+        Log ('ERROR: ' + $errorMessage) } catch { }
+
     if ($switched) {
         try {
             # Stop only the new VMO backend, if present.

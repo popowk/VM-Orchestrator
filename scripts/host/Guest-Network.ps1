@@ -1,4 +1,4 @@
-﻿# Dot-source helpers. IPv4 is the host's OWN address, never an iKuai gateway address.
+# Dot-source helpers. IPv4 is the host's OWN address, never an iKuai gateway address.
 $script:GuestNetworkConfig = 'data\guest-network.json'
 function Get-GuestNetwork {
     param([string]$Project)

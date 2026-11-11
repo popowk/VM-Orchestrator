@@ -1,4 +1,4 @@
-﻿# VMO Guest Agent installer for Windows PowerShell 5.1 and later.
+# VMO Guest Agent installer for Windows PowerShell 5.1 and later.
 # Installs immutable code in Program Files, and protects enrollment data in ProgramData.
 # TemplateMode NEVER enrolls the machine or embeds any per-customer identity.
 param(

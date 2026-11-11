@@ -1,4 +1,4 @@
-﻿# Explicit clipboard operation: legacy credential is a revocable API key, NOT a browser login password.
+# Explicit clipboard operation: legacy credential is a revocable API key, NOT a browser login password.
 $ErrorActionPreference = 'Stop'
 $keyFile = Join-Path $env:LOCALAPPDATA 'VM-Orchestrator\admin-key.txt'
 if (-not (Test-Path -LiteralPath $keyFile -PathType Leaf)) {
