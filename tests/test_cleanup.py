@@ -2,6 +2,8 @@
 from __future__ import annotations
 from contextlib import contextmanager
 import os
+import json
+import hashlib
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
@@ -126,6 +128,66 @@ class CleanupTests(unittest.TestCase):
         self.assertFalse(any(x['kind'] == 'reinstall_backup' for x in found['items']))
         self.assertTrue(found['protected'])
         self.assertTrue(self.old.exists())
+
+
+    def test_recent_staging_and_generated_updater_files_are_detected(self):
+        (self.root / 'VERSION').write_text('1.4.51\n', encoding='utf-8')
+        newer = self.updates / 'unpacked-v1.4.50'
+        newer.mkdir()
+        (newer / 'file.py').write_text('old unpacked code')
+        old_script = self.updates / 'Apply-GitHubUpdate-v1.4.44.ps1'
+        old_script.write_text('old')
+        active_script = self.updates / 'Apply-GitHubUpdate-v1.4.51.ps1'
+        active_script.write_text('keep')
+        found = self.manager.scan()
+        ids = {x['id'] for x in found['items']}
+        self.assertIn('stage:unpacked-v1.4.50', ids)
+        self.assertIn('artifact:Apply-GitHubUpdate-v1.4.44.ps1', ids)
+        self.assertNotIn('artifact:Apply-GitHubUpdate-v1.4.51.ps1', ids)
+        self.assertTrue(any(x['path'] == str(active_script) for x in found['protected']))
+
+    def test_release_manifest_protects_modified_code_and_marks_extras_manual(self):
+        (self.root / 'VERSION').write_text('1.4.51\n', encoding='utf-8')
+        app = self.root / 'app'
+        app.mkdir()
+        original = app / 'main.py'
+        original.write_bytes(b'shipped')
+        extra = app / 'former.py'
+        extra.write_bytes(b'old script')
+        (self.root / 'release-manifest.json').write_text(json.dumps({
+            'version': '1.4.51',
+            'files': {'app/main.py': {'size': 7,
+                        'sha256': hashlib.sha256(b'shipped').hexdigest()}}
+        }))
+        found = self.manager.scan()
+        candidates = [x for x in found['items'] if x['kind'] == 'program_extra']
+        self.assertEqual([x['path'] for x in candidates], [str(extra)])
+        self.assertTrue(candidates[0]['manual'])
+        self.assertNotIn(str(original), [x['path'] for x in found['protected']])
+        original.write_bytes(b'patched')
+        self.assertTrue(any(x['path'] == str(original)
+                            for x in self.manager.scan()['protected']))
+        item = next(x for x in self.manager.scan()['items']
+                    if x['kind'] == 'program_extra')
+        self.manager.delete([{'id': item['id'], 'fingerprint': item['fingerprint']}])
+        self.assertFalse(extra.exists())
+        self.assertTrue(original.exists())
+
+    def test_keep_newest_two_rollback_archives_even_when_all_are_recent(self):
+        back = self.updates / 'backups'
+        back.mkdir()
+        for version in ('1.4.46', '1.4.47', '1.4.48'):
+            path = back / ('before-v' + version + '-20261111-230000')
+            path.mkdir()
+            (path / 'code').mkdir()
+            (path / 'code' / 'VERSION').write_text(version)
+            os.utime(path, (time.time(), time.time()))
+            time.sleep(.01)
+        found = self.manager.scan()
+        old = [x for x in found['items'] if x['kind'] == 'code_backup']
+        self.assertEqual(len(old), 1)
+        self.assertTrue(old[0]['manual'])
+        self.assertGreaterEqual(sum('最近两份' in x['reason'] for x in found['protected']), 2)
 
 
 if __name__ == '__main__':

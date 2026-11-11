@@ -19,7 +19,7 @@ $logFile = Join-Path $stateDir ('updater-' + $Attempt + '.log')
 $folders = @('app','guest_agent','scripts','integrations','docs')
 $rootFiles = @('VERSION','Install-All.cmd','Install-All.ps1','Start-VM-Orchestrator.cmd',
                'Manage.cmd','Repair-Stuck-Update.cmd','Repair-Stuck-Update.ps1',
-               'README.md','requirements.txt','.gitignore','.env.example')
+               'README.md','requirements.txt','.gitignore','.env.example','release-manifest.json')
 $backupDir = $null
 $switched = $false
 $stoppedOld = $false
@@ -150,6 +150,31 @@ function Get-LegacyVMOCmdId([int]$vmoPid) {
     } catch { }
     return 0
 }
+function Close-OrphanedVMOLaunchers {
+    # Older launchers are not always in Python's parent chain (for example,
+    # a manual restart, a detached child, or a former Host instance).
+    # Match only this project's uniquely named CMD title or script path.
+    try {
+        $all = @(Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction Stop)
+        foreach ($item in $all) {
+            $id = [int]$item.ProcessId
+            if ($id -le 0) { continue }
+            $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
+            if (-not $proc) { continue }
+            $line = [string]$item.CommandLine
+            $titleMatch = ($proc.MainWindowTitle -eq 'VM Orchestrator - Unified Backend')
+            $scriptMatch = ($line -match '(?i)Start-VM-Orchestrator\.cmd')
+            if (-not ($titleMatch -or $scriptMatch)) { continue }
+            # For a launcher with an explicit path, it must reside below Target.
+            if ($scriptMatch -and -not $titleMatch -and
+                $line -match '(?i)Start-VM-Orchestrator\.cmd' -and
+                $line -match '(?i)[A-Z]:\\' -and
+                $line -notlike ('*' + $Target + '*')) { continue }
+            Stop-Process -Id $id -Force -ErrorAction Stop
+            Log ('Closed stale VMO CMD PID ' + $id)
+        }
+    } catch { Log ('VMO launcher sweep skipped: ' + $_.Exception.Message) }
+}
 function Close-LegacyVMOCmd([int]$cmdId) {
     if ($cmdId -le 0) { return }
     try {
@@ -236,6 +261,7 @@ try {
         Stop-Process -Id $HostPid -Force -ErrorAction Stop
         $stoppedOld=$true
         Close-LegacyVMOCmd $oldCmdId
+        Close-OrphanedVMOLaunchers
     } else {
         Log 'HostPid=0: no listener, safely skipping process termination'
     }
@@ -275,6 +301,7 @@ try {
     Launch-Host
     if (-not (Probe-Version $Version)) { throw 'New Host service did not pass the health check' }
     Write-State 'success' 'GitHub update succeeded; both Host ports are listening'
+    Close-OrphanedVMOLaunchers
 } catch {
     $errorMessage = $_.Exception.Message
     try { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null

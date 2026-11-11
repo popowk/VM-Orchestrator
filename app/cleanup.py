@@ -56,6 +56,43 @@ def _entry(item_id: str, kind: str, title: str, path: Path,
     }
 
 
+
+
+def _guard_file(path: Path, managed_root: Path) -> os.stat_result:
+    """Reject links and escaped paths, including junctions on ancestors."""
+    if not path.is_file() or _is_reparse_point(path):
+        raise CleanupError('Not a regular managed file')
+    ancestor = path.parent
+    while ancestor != managed_root:
+        if _is_reparse_point(ancestor) or ancestor == ancestor.parent:
+            raise CleanupError('Path uses an unsafe ancestor')
+        ancestor = ancestor.parent
+    if _is_reparse_point(managed_root) or not path.resolve().is_relative_to(managed_root.resolve()):
+        raise CleanupError('File escaped the managed root')
+    return path.stat()
+
+
+def _file_entry(item_id: str, kind: str, title: str, path: Path,
+                root: Path, manual: bool, reason: str) -> dict:
+    st = _guard_file(path, root)
+    item = _entry(item_id, kind, title, path, st.st_size, 1, st.st_mtime, manual)
+    item['reason'] = reason
+    return item
+
+
+def _release_manifest(root: Path, protected: list) -> dict | None:
+    manifest = root / 'release-manifest.json'
+    try:
+        data = json.loads(manifest.read_text(encoding='utf-8-sig'))
+        installed = (root / 'VERSION').read_text(encoding='utf-8-sig').strip()
+        if data.get('version') != installed or not isinstance(data.get('files'), dict):
+            raise ValueError('Release manifest version does not match installed version')
+        return data['files']
+    except (OSError, ValueError, TypeError) as exc:
+        protected.append({'path': str(manifest),
+                          'reason': '当前版本文件清单不存在或不匹配；无法判断程序目录内额外文件：' + str(exc)[:100]})
+        return None
+
 class CleanupManager:
     def __init__(self, root: Path, vms_root: Path, db_path: Path, store, fleet, vmrun):
         self.root = root.resolve(strict=True)
@@ -85,58 +122,145 @@ class CleanupManager:
         items, protected = [], []
         now = time.time()
         updates = self.root / 'data' / 'updates'
+        current = (self.root / 'VERSION').read_text(encoding='utf-8-sig').strip() if (self.root / 'VERSION').exists() else ''
         if updates.is_dir() and not _is_reparse_point(updates):
             status_file = updates / 'status.json'
             try:
                 status = json.loads(status_file.read_text(encoding='utf-8-sig'))
             except (OSError, ValueError):
                 status = {}
-            latest_attempt = str(status.get('attempt') or '')
-            # Cache: only exact release staging directories, older than seven days.
+            attempt = str(status.get('attempt') or '')
+            # An idle/successful updater needs none of these stage directories.
+            # The old seven-day cutoff concealed newly superseded releases.
             for candidate in sorted(updates.iterdir()):
-                name = candidate.name
-                if not re.fullmatch(r'(?:stage|unpacked)-v\d+\.\d+\.\d+', name):
+                if not re.fullmatch(r'(?:stage|unpacked)-v\d+\.\d+\.\d+', candidate.name):
                     continue
                 try:
-                    if now - candidate.stat().st_mtime < 7 * 86400:
-                        continue
-                    total, files = _guard_tree(candidate, updates)
-                    items.append(_entry('stage:' + name, 'program_cache',
-                                        '旧更新临时目录', candidate, total, files,
-                                        candidate.stat().st_mtime, False))
+                    total, count = _guard_tree(candidate, updates)
+                    item = _entry('stage:' + candidate.name, 'program_cache',
+                                  '更新解压缓存 · ' + candidate.name, candidate,
+                                  total, count, candidate.stat().st_mtime, False)
+                    item['reason'] = '更新流程结束后不再运行此目录；删除前重新校验更新状态'
+                    items.append(item)
+                except (OSError, CleanupError) as exc:
+                    protected.append({'path': str(candidate), 'reason': '无法安全清理：' + str(exc)})
+            # The current launcher copy and latest logs may still be needed for
+            # diagnosing a recent installation. Keep them even after success.
+            keep_names = {'status.json', 'dependencies.log', 'host-launch-out.log',
+                          'host-launch-error.log', 'Repair-Updater.ps1'}
+            keep_names.update({'Apply-GitHubUpdate-v' + current + '.ps1'})
+            if re.fullmatch(r'[0-9a-fA-F]{32}', attempt):
+                keep_names.update({'updater-' + attempt + '.log',
+                                   'updater-bootstrap-' + attempt + '.log',
+                                   'updater-ack-' + attempt + '.txt'})
+            for candidate in sorted(updates.iterdir()):
+                if candidate.is_dir():
+                    continue
+                name = candidate.name
+                if _is_reparse_point(candidate):
+                    protected.append({'path': str(candidate), 'reason': '链接或重解析文件不能自动删除'})
+                    continue
+                if not candidate.is_file():
+                    continue
+                if name in keep_names:
+                    protected.append({'path': str(candidate), 'reason': '保留当前更新状态、排错记录或人工维修脚本'})
+                    continue
+                generated = (
+                    re.fullmatch(r'Apply-GitHubUpdate-v\d+\.\d+\.\d+\.ps1', name)
+                    or re.fullmatch(r'Apply-GitHubUpdate\.backup-[\w.-]+\.ps1', name)
+                    or re.fullmatch(r'updater-[0-9a-fA-F]{32}\.log', name)
+                    or re.fullmatch(r'updater-bootstrap-[0-9a-fA-F]{32}\.log', name)
+                    or re.fullmatch(r'updater-ack-[0-9a-fA-F]{32}\.txt', name)
+                    or re.fullmatch(r'(?:status|download)-[0-9a-fA-F]{32}\.tmp', name)
+                )
+                if not generated:
+                    protected.append({'path': str(candidate), 'reason': '未知 data/updates 文件；未核实用途，不自动删除'})
+                    continue
+                try:
+                    manual = name.startswith('Apply-GitHubUpdate.backup-') or name.endswith('.log')
+                    items.append(_file_entry('artifact:' + name, 'update_artifact',
+                                            '旧更新附属文件 · ' + name, candidate,
+                                            self.root, bool(manual),
+                                            '非当前更新尝试生成的文件；日志/脚本备份需手动勾选'))
                 except (OSError, CleanupError) as exc:
                     protected.append({'path': str(candidate), 'reason': str(exc)})
-            # Log cleanup never deletes the latest updater attempt.
-            for candidate in sorted(updates.glob('updater-*.log')):
-                if not re.fullmatch(r'updater-[0-9a-fA-F]{32}\.log', candidate.name):
-                    continue
-                if candidate.stem == 'updater-' + latest_attempt:
-                    continue
-                try:
-                    if (_is_reparse_point(candidate) or not candidate.is_file() or
-                            now - candidate.stat().st_mtime < 30 * 86400):
-                        continue
-                    items.append(_entry('log:' + candidate.name, 'old_log',
-                                        '旧更新日志', candidate, candidate.stat().st_size, 1,
-                                        candidate.stat().st_mtime, False))
-                except OSError:
-                    continue
             backup_root = updates / 'backups'
             if backup_root.is_dir() and not _is_reparse_point(backup_root):
                 names = sorted((x for x in backup_root.iterdir()
                                 if re.fullmatch(r'(?:before|hot)-v\d+\.\d+\.\d+-[A-Za-z0-9-]+', x.name)),
                                key=lambda p: p.stat().st_mtime, reverse=True)
-                # Keep the two newest rollback archives, unconditionally.
+                # The newest two code backups are unconditional rollback protection.
+                for candidate in names[:2]:
+                    protected.append({'path': str(candidate), 'reason': '最近两份代码回滚备份，强制保留'})
                 for candidate in names[2:]:
                     try:
-                        if now - candidate.stat().st_mtime < 30 * 86400:
-                            continue
-                        total, files = _guard_tree(candidate, backup_root)
-                        items.append(_entry('code:' + candidate.name, 'code_backup',
-                                            '旧版本代码备份（手动选择）', candidate,
-                                            total, files, candidate.stat().st_mtime, True))
+                        total, count = _guard_tree(candidate, backup_root)
+                        item = _entry('code:' + candidate.name, 'code_backup',
+                                      '历史代码回滚备份 · ' + candidate.name, candidate,
+                                      total, count, candidate.stat().st_mtime, True)
+                        item['reason'] = '存在可用性依赖风险；需要人工确认不再用于回滚'
+                        items.append(item)
                     except (OSError, CleanupError) as exc:
                         protected.append({'path': str(candidate), 'reason': str(exc)})
+        # Compare managed program trees with this version's build-time manifest.
+        # Never infer that unrecognized software is disposable without review.
+        manifest = _release_manifest(self.root, protected)
+        if manifest is not None:
+            allowed_suffixes = {'.py', '.ps1', '.cmd', '.bat', '.php', '.js', '.css', '.html', '.json'}
+            for folder in ('app', 'guest_agent', 'scripts', 'integrations'):
+                base = self.root / folder
+                if not base.is_dir() or _is_reparse_point(base):
+                    continue
+                for directory, dirs, files in os.walk(base, followlinks=False):
+                    parent = Path(directory)
+                    safe_dirs = []
+                    for name in dirs:
+                        sub = parent / name
+                        if _is_reparse_point(sub):
+                            protected.append({'path': str(sub), 'reason': '自定义目录或链接；不进入扫描'})
+                        elif name not in ('__pycache__', '.git', 'node_modules'):
+                            safe_dirs.append(name)
+                    dirs[:] = safe_dirs
+                    for name in files:
+                        candidate = parent / name
+                        rel = candidate.relative_to(self.root).as_posix()
+                        if rel in manifest:
+                            # A modified or locally patched source must be protected.
+                            expected = manifest[rel]
+                            try:
+                                if candidate.stat().st_size != expected.get('size') or (
+                                    candidate.stat().st_size <= 4 * 1024 * 1024 and
+                                    hashlib.sha256(candidate.read_bytes()).hexdigest() != expected.get('sha256')):
+                                    protected.append({'path': str(candidate), 'reason': '与当前发行版校验值不同；保留本地修改'})
+                            except (OSError, ValueError, TypeError):
+                                protected.append({'path': str(candidate), 'reason': '程序文件校验失败，保留'})
+                            continue
+                        if candidate.suffix.lower() not in allowed_suffixes:
+                            continue
+                        try:
+                            items.append(_file_entry('extra:' + rel, 'program_extra',
+                                                     '非当前版本程序文件 · ' + rel,
+                                                     candidate, self.root, True,
+                                                     '不在当前版本清单中；可能是自定义脚本/插件，必须人工核对'))
+                        except (OSError, CleanupError) as exc:
+                            protected.append({'path': str(candidate), 'reason': str(exc)})
+        # Only recognize known temporary file suffixes directly under data.
+        # Database, certificates, sessions, keys and subdirectories are never candidates.
+        data_root = self.root / 'data'
+        if data_root.is_dir() and not _is_reparse_point(data_root):
+            for candidate in data_root.iterdir():
+                if not candidate.is_file() or _is_reparse_point(candidate):
+                    continue
+                if not re.fullmatch(r'(?:status|download|upgrade)-[0-9a-fA-F]{32}\.tmp', candidate.name):
+                    continue
+                try:
+                    if now - candidate.stat().st_mtime >= 86400:
+                        items.append(_file_entry('data:' + candidate.name, 'data_cache',
+                                                 '历史状态临时文件 · ' + candidate.name,
+                                                 candidate, self.root, True,
+                                                 '运行数据目录下的过期临时文件，需手动确认'))
+                except (OSError, CleanupError):
+                    pass
         backup_root = self.vms_root / '.vmo-reinstall-backups'
         if backup_root.is_dir() and not _is_reparse_point(backup_root):
             with self.fleet.db() as d:
@@ -168,7 +292,7 @@ class CleanupManager:
                                         total, files, path.stat().st_mtime, True))
                 except Exception as exc:
                     protected.append({'path': str(path), 'reason': str(exc)[:180]})
-        return {'items': items, 'protected': protected[:50],
+        return {'items': items, 'protected': protected[:300], 'protected_count': len(protected),
                 'total_bytes': sum(x['bytes'] for x in items),
                 'reinstall_backups': sum(x['kind'] == 'reinstall_backup' for x in items)}
 
@@ -197,9 +321,8 @@ class CleanupManager:
             if not live or live['fingerprint'] != item['fingerprint']:
                 raise CleanupError('File changed during cleanup; stopped')
             path = Path(item['path'])
-            if item['kind'] == 'old_log':
-                if path.parent != self.root / 'data' / 'updates' or _is_reparse_point(path):
-                    raise CleanupError('Unsafe log path')
+            if item['kind'] in ('old_log', 'update_artifact', 'program_extra', 'data_cache'):
+                _guard_file(path, self.root)
                 path.unlink()
             else:
                 parent = path.parent
