@@ -15,7 +15,8 @@ $statePath = Join-Path $stateDir 'status.json'
 $logFile = Join-Path $stateDir 'updater.log'
 $folders = @('app','guest_agent','scripts','integrations','docs')
 $rootFiles = @('VERSION','Install-All.cmd','Install-All.ps1','Start-VM-Orchestrator.cmd',
-               'Manage.cmd','README.md','requirements.txt','.gitignore','.env.example')
+               'Manage.cmd','Repair-Stuck-Update.cmd','Repair-Stuck-Update.ps1',
+               'README.md','requirements.txt','.gitignore','.env.example')
 $backupDir = $null
 $switched = $false
 $stoppedOld = $false
@@ -92,7 +93,7 @@ try {
     $actual = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $ExpectedSha256.ToLowerInvariant()) { throw 'SHA256 verification failed' }
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
-    Write-State 'preparing' ('独立更新进程已启动 (PID ' + $PID + ')，正在验证安装包')
+    Write-State 'preparing' ('Detached updater started (PID ' + $PID + ') and verifying release archive')
     $staging = Join-Path $stateDir ('unpacked-v' + $Version)
     if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
@@ -121,7 +122,7 @@ try {
     }
     # Leave the HTTP request sufficient time to receive the accepted response.
     Start-Sleep -Seconds 4
-    Write-State 'stopping' '版本包已解压校验，正在安全停止旧版服务'
+    Write-State 'stopping' 'Release verified; stopping previous Host safely'
     $hostProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$HostPid" -ErrorAction SilentlyContinue
     if ($hostProcess -and ($hostProcess.Name -notmatch '^python(w)?\.exe$' -or
                           $hostProcess.CommandLine -notmatch 'app\.unified_server')) {
@@ -137,7 +138,7 @@ try {
             throw "Port $port is still occupied, refusing to replace a running service"
         }
     }
-    Write-State 'backing_up' '端口已释放，开始备份旧版程序'
+    Write-State 'backing_up' 'Service ports released; backing up prior code'
     $oldVersion = (Get-Content -LiteralPath (Join-Path $Target 'VERSION') -Raw).Trim()
     $backupDir = Join-Path $stateDir ('backups\before-v' + $Version + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     $backupCode = Join-Path $backupDir 'code'
@@ -154,19 +155,19 @@ try {
             Copy-Item -LiteralPath $path -Destination (Join-Path $backupCode $name) -Force
         }
     }
-    Write-State 'applying' '程序文件已备份，正在替换旧版代码'
+    Write-State 'applying' 'Backup complete; replacing program files'
     $switched = $true
     Replace-Code $source
     # Unlike a new system install, never initialize accounts, rotate keys,
     # touch the database, or run Sysprep/Guest provisioning here.
-    Write-State 'applying' '文件已替换，正在校验和安装所需依赖'
+    Write-State 'applying' 'Code deployed; validating required Python dependencies'
     $deps = Join-Path $Target 'scripts\host\Install-HostPythonDeps.ps1'
     & $deps *> (Join-Path $stateDir 'dependencies.log')
     if ($LASTEXITCODE -ne 0) { throw 'Python dependency installation failed' }
-    Write-State 'restarting' '新版程序已部署，正在启动并等待健康检查'
+    Write-State 'restarting' 'New Host starting; awaiting health check'
     Launch-Host
     if (-not (Probe-Version $Version)) { throw 'New Host service did not pass the health check' }
-    Write-State 'success' 'GitHub 更新成功，双端口统一服务已启动'
+    Write-State 'success' 'GitHub update succeeded; both Host ports are listening'
 } catch {
     $errorMessage = $_.Exception.Message
     try { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
@@ -186,11 +187,11 @@ try {
             Restore-OldCode
             Launch-Host
             if (Probe-Version '' 20) {
-                Write-State 'rolled_back' ('升级失败，已恢复旧版：' + $errorMessage)
+                Write-State 'rolled_back' ('Update failed; prior code restored: ' + $errorMessage)
             } else {
-                Write-State 'failed' ('升级失败，恢复旧版后服务仍未就绪：' + $errorMessage)
+                Write-State 'failed' ('Update failed; prior Host not healthy after rollback: ' + $errorMessage)
             }
-        } catch { Write-State 'failed' ('回滚失败：' + $_.Exception.Message) }
+        } catch { Write-State 'failed' ('Rollback failed: ' + $_.Exception.Message) }
     } else {
         # If old service was stopped before the backup, restart unmodified code.
         try {
@@ -198,7 +199,7 @@ try {
                 Launch-Host
             }
         } catch { }
-        Write-State 'failed' ('安装未完成，程序未替换：' + $errorMessage)
+        Write-State 'failed' ('Update not completed; existing code unchanged: ' + $errorMessage)
     }
     exit 1
 }

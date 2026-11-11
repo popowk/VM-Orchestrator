@@ -2,17 +2,17 @@
 # Run as the SAME logged-in Windows user that runs VMware/Host, not SYSTEM.
 param(
     [string]$Target = 'D:\VMware\VM-Orchestrator',
-    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.41.zip')
+    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.42.zip')
 )
 $ErrorActionPreference='Stop'
 try {
     $Target = [IO.Path]::GetFullPath($Target)
     $ZipPath = [IO.Path]::GetFullPath($ZipPath)
     if (-not (Test-Path -LiteralPath (Join-Path $Target 'app\main.py') -PathType Leaf)) {
-        throw "找不到 VMO 安装目录：$Target；请使用 -Target 指定实际位置"
+        throw "VMO installation folder not found: $Target. Supply -Target with the correct path."
     }
     if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
-        throw "找不到更新包：$ZipPath"
+        throw "Update archive not found: $ZipPath"
     }
     $stateDir=Join-Path $Target 'data\updates'
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
@@ -22,26 +22,29 @@ try {
     $version=$null
     $runner=Join-Path $stateDir 'Repair-Updater.ps1'
     try {
-        $verEntry=$zip.GetEntry('VM-Orchestrator-v1.4.41/VERSION')
-        $scriptEntry=$zip.GetEntry('VM-Orchestrator-v1.4.41/scripts/host/Apply-GitHubUpdate.ps1')
-        if (-not $verEntry -or -not $scriptEntry) { throw '更新包缺少 VERSION 或独立更新脚本' }
+        $verEntry=$zip.GetEntry('VM-Orchestrator-v1.4.42/VERSION')
+        $scriptEntry=$zip.GetEntry('VM-Orchestrator-v1.4.42/scripts/host/Apply-GitHubUpdate.ps1')
+        if (-not $verEntry -or -not $scriptEntry) { throw 'Missing VERSION or detached updater in ZIP' }
         $sr=New-Object IO.StreamReader($verEntry.Open())
         try { $version=$sr.ReadToEnd().Trim() } finally { $sr.Dispose() }
-        if ($version -ne '1.4.41') { throw "不支持的修复包版本：$version" }
+        if ($version -ne '1.4.42') { throw "Unsupported recovery archive version: $version" }
         $sourceStream=$scriptEntry.Open()
         $targetStream=[IO.File]::Open($runner,[IO.FileMode]::Create,[IO.FileAccess]::Write)
         try { $sourceStream.CopyTo($targetStream) } finally { $targetStream.Dispose();$sourceStream.Dispose() }
+        # Normalize the updater to UTF-8 BOM for Windows PowerShell 5.1.
+        $runnerCode = [IO.File]::ReadAllText($runner, [Text.Encoding]::UTF8)
+        [IO.File]::WriteAllText($runner, $runnerCode, (New-Object System.Text.UTF8Encoding($true)))
     } finally { $zip.Dispose() }
     $expected=(Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $shaPath=$ZipPath+'.sha256'
     if (Test-Path -LiteralPath $shaPath -PathType Leaf) {
         $line=(Get-Content -LiteralPath $shaPath -Raw).Trim()
-        if ($line -notmatch '^([a-fA-F0-9]{64})\s+\*?VM-Orchestrator-v1\.4\.41\.zip$') {
-            throw '不符合格式的 SHA256 清单'
+        if ($line -notmatch '^([a-fA-F0-9]{64})\s+\*?VM-Orchestrator-v1\.4\.42\.zip$') {
+            throw 'Invalid SHA256 manifest format'
         }
-        if ($Matches[1].ToLowerInvariant() -ne $expected) { throw '更新包 SHA256 不匹配' }
+        if ($Matches[1].ToLowerInvariant() -ne $expected) { throw 'ZIP SHA256 mismatch' }
     } else {
-        Write-Warning '缺少发布版 .sha256 清单。建议优先从 GitHub Release 下载对应 checksum 文件。'
+        Write-Warning 'SHA256 sidecar not found. Download the matching checksum from the GitHub Release.'
     }
     $hostPid=0
     $listener=Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -49,18 +52,18 @@ try {
         $p=Get-CimInstance Win32_Process -Filter ("ProcessId="+$listener.OwningProcess) -ErrorAction Stop
         if (-not $p -or $p.Name -notmatch '^python(w)?\.exe$' -or
             $p.CommandLine -notmatch 'app\.unified_server') {
-            throw '8765 已被非 VMO 进程占用，拒绝停止或覆盖。'
+            throw 'Port 8765 is owned by an unknown process. Refusing to replace it.'
         }
         $hostPid=[int]$p.ProcessId
     }
-    Write-Host "正在修复 VMO：$Target" -ForegroundColor Cyan
-    Write-Host "更新版本：$version / 原服务 PID：$hostPid" -ForegroundColor Cyan
-    Write-Host '将先备份现有程序；升级失败自动回滚。客户数据不删除。' -ForegroundColor Cyan
+    Write-Host "VMO recovery target: $Target" -ForegroundColor Cyan
+    Write-Host "Updating to $version; existing Host PID: $hostPid" -ForegroundColor Cyan
+    Write-Host 'The existing code is backed up before replacement. Customer data is preserved.' -ForegroundColor Cyan
     & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $runner `
         -ZipPath $ZipPath -ExpectedSha256 $expected -Target $Target -HostPid $hostPid -Version $version
-    if ($LASTEXITCODE -ne 0) { throw '独立更新器执行失败，请查看 data\updates\updater.log' }
-    Write-Host '程序已启动且健康检查通过。' -ForegroundColor Green
+    if ($LASTEXITCODE -ne 0) { throw 'Detached updater failed. Inspect data\updates\updater.log' }
+    Write-Host 'Host started and passed the health check.' -ForegroundColor Green
 } catch {
-    Write-Host ('修复失败：'+$_.Exception.Message) -ForegroundColor Red
+    Write-Host ('Recovery failed: '+$_.Exception.Message) -ForegroundColor Red
     exit 1
 }
