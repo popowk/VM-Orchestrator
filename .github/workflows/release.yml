@@ -74,6 +74,58 @@ jobs:
             exit 1
           }
           Write-Host "PASS: PowerShell parser accepted updater"
+      - name: Regression - PID zero and redacted WMI CommandLine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $file='scripts/host/Apply-GitHubUpdate.ps1'
+          $code=Get-Content -LiteralPath $file -Raw -Encoding UTF8
+          $start=$code.IndexOf('function Get-VerifiedVMOPid')
+          $end=$code.IndexOf('function Probe-Version', $start)
+          if ($start -lt 0 -or $end -le $start) { throw 'Missing verified Host PID helper' }
+          Invoke-Expression $code.Substring($start, $end-$start)
+          $Target=Join-Path $env:RUNNER_TEMP 'vmo-verify'
+          New-Item -ItemType Directory -Path $Target -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $Target 'VERSION') -Value '1.4.47' -Encoding ASCII
+          $global:mockPorts=$false
+          $global:mockCmd=$null
+          $global:mockHealthPid=4242
+          function Get-NetTCPConnection {
+            param([string]$State,[int]$LocalPort)
+            if ($global:mockPorts) { [pscustomobject]@{OwningProcess=4242} }
+          }
+          function Get-CimInstance {
+            param([string]$ClassName,[string]$Filter)
+            if ($Filter -match 'ProcessId=0') { throw 'Cannot query System Idle PID 0' }
+            [pscustomobject]@{Name='python.exe';CommandLine=$global:mockCmd}
+          }
+          function Invoke-RestMethod {
+            param([string]$Uri,[int]$TimeoutSec)
+            [pscustomobject]@{
+              status='ok';phase=10;pid=$global:mockHealthPid
+              capability='per-clone-oobe-template-bootstrap';version='1.4.47'
+            }
+          }
+          if ((Get-VerifiedVMOPid '1.4.47' 0) -ne 0) {
+            throw 'No listener with HostPid=0 must not query/stop any process'
+          }
+          $global:mockPorts=$true
+          if ((Get-VerifiedVMOPid '1.4.47' 0) -ne 4242) {
+            throw 'Expected verified Python process even with empty CommandLine'
+          }
+          $failed=$false
+          try { Get-VerifiedVMOPid '1.4.47' 1000 | Out-Null } catch { $failed=$true }
+          if (-not $failed) { throw 'Mismatched known PID must be rejected' }
+          $global:mockHealthPid=999
+          $failed=$false
+          try { Get-VerifiedVMOPid '1.4.47' 0 | Out-Null } catch { $failed=$true }
+          if (-not $failed) { throw 'Bad Host health PID must be rejected' }
+          $global:mockHealthPid=4242
+          $global:mockCmd='python.exe -m unrelated.module'
+          $failed=$false
+          try { Get-VerifiedVMOPid '1.4.47' 0 | Out-Null } catch { $failed=$true }
+          if (-not $failed) { throw 'Non-VMO Python entrypoint must be rejected' }
+          Write-Host 'PASS: zero PID and empty WMI CommandLine handled safely'
       - name: Build release ZIP and SHA-256
         run: python tools/build_release.py
       - name: Publish only a new release version

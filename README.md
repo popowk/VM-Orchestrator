@@ -1,4 +1,4 @@
-# VM Orchestrator — 功能总览（v1.4.47）
+# VM Orchestrator — 功能总览（v1.4.48）
 
 VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机运营管理系统。正式发布包仅包含运行程序与必要安装/运维脚本；此文件为唯一的产品说明。
 
@@ -44,7 +44,7 @@ VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机
 - 目前发布包的语法、HTTP 和模拟场景可测试，但实际 VMware Workstation、思博环境、Windows 服务重启与回滚仍需在目标机器验收。
 
 
-### Windows updater reliability (v1.4.47)
+### Windows updater reliability (v1.4.48)
 
 On Windows, the Host validates the copied updater using the local PowerShell
 parser, writes it as UTF-8 with BOM, then launches it with Unicode-safe
@@ -67,3 +67,14 @@ checks ownership of both ports by the same new PID and verifies the live and
 disk versions across three consecutive probes before recording success.
 If those versions disagree, inspect the installed directory and process
 startup method before retrying. Static UI-only updates remain restart-free.
+
+
+### Windows updater PID=0 recovery (v1.4.48)
+
+When manual recovery starts with no Host listener, the detached updater no
+longer queries Windows ProcessId=0 (System Idle). If VMO is still running or
+restarts before replacement, its PID is verified using both ports 8765/8766,
+the Python process name, /health PID/capability/version and the local VERSION
+file. A redacted WMI CommandLine is accepted only if all positive checks pass.
+Any ambiguous service or mismatched version blocks replacement. Failed
+upgrades only restore code after checking that both ports are free.

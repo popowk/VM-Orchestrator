@@ -45,6 +45,46 @@ function Write-State([string]$status,[string]$description) {
     Move-Item -LiteralPath $temp -Destination $statePath -Force
     Log "$status : $description"
 }
+function Get-VerifiedVMOPid([string]$version,[int]$knownPid=0) {
+    $hostPorts=@(Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue)
+    $guestPorts=@(Get-NetTCPConnection -State Listen -LocalPort 8766 -ErrorAction SilentlyContinue)
+    if ($hostPorts.Count -eq 0 -and $guestPorts.Count -eq 0) {
+        if ($knownPid -gt 0 -and (Get-Process -Id $knownPid -ErrorAction SilentlyContinue)) {
+            throw 'Host PID still exists after ports closed'
+        }
+        return 0
+    }
+    if ($hostPorts.Count -eq 0 -or $guestPorts.Count -eq 0) { throw 'VMO ports are not both listening' }
+    $hostIds=@($hostPorts | Select-Object -ExpandProperty OwningProcess -Unique)
+    $guestIds=@($guestPorts | Select-Object -ExpandProperty OwningProcess -Unique)
+    if ($hostIds.Count -ne 1 -or $guestIds.Count -ne 1 -or
+        [int]$hostIds[0] -le 0 -or [int]$hostIds[0] -ne [int]$guestIds[0]) {
+        throw 'VMO ports must belong to one PID'
+    }
+    $id=[int]$hostIds[0]
+    if ($knownPid -gt 0 -and $id -ne $knownPid) { throw 'Host PID changed since update request' }
+    $process=Get-CimInstance Win32_Process -Filter ("ProcessId=" + $id) -ErrorAction Stop
+    if (-not $process -or $process.Name -notmatch '^python(w)?\.exe$') { throw 'Unknown VMO port owner' }
+    if ($process.CommandLine -and $process.CommandLine -notmatch 'app\.unified_server') {
+        throw 'Unexpected Python entrypoint'
+    }
+    $health=Invoke-RestMethod 'http://127.0.0.1:8765/health' -TimeoutSec 5 -ErrorAction Stop
+    $disk=(Get-Content (Join-Path $Target 'VERSION') -Raw -ErrorAction Stop).Trim()
+    if ($health.status -ne 'ok' -or $health.phase -ne 10 -or
+        $health.capability -ne 'per-clone-oobe-template-bootstrap' -or
+        [int]$health.pid -ne $id -or $health.version -ne $version -or $disk -ne $version) {
+        throw 'VMO health or version mismatch'
+    }
+    $hostCheck=@(Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue |
+                 Select-Object -ExpandProperty OwningProcess -Unique)
+    $guestCheck=@(Get-NetTCPConnection -State Listen -LocalPort 8766 -ErrorAction SilentlyContinue |
+                  Select-Object -ExpandProperty OwningProcess -Unique)
+    if ($hostCheck.Count -ne 1 -or $guestCheck.Count -ne 1 -or
+        [int]$hostCheck[0] -ne $id -or [int]$guestCheck[0] -ne $id) {
+        throw 'VMO PID changed during identity check'
+    }
+    return $id
+}
 function Probe-Version([string]$needed,[int]$attempts=30) {
     $stable = 0
     $lastPid = 0
@@ -152,14 +192,15 @@ try {
     # Leave the HTTP request sufficient time to receive the accepted response.
     Start-Sleep -Seconds 4
     Write-State 'stopping' 'Release verified; stopping previous Host safely'
-    $hostProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$HostPid" -ErrorAction SilentlyContinue
-    if ($hostProcess -and ($hostProcess.Name -notmatch '^python(w)?\.exe$' -or
-                          $hostProcess.CommandLine -notmatch 'app\.unified_server')) {
-        throw 'Refusing to terminate a process which is not the VMO unified backend'
-    }
-    if ($hostProcess) {
+    $beforeVersion=(Get-Content (Join-Path $Target 'VERSION') -Raw -ErrorAction Stop).Trim()
+    $oldId=Get-VerifiedVMOPid $beforeVersion $HostPid
+    if ($oldId -gt 0) {
+        $HostPid=$oldId
+        Log ('Verified old Host PID ' + $HostPid)
         Stop-Process -Id $HostPid -Force -ErrorAction Stop
-        $stoppedOld = $true
+        $stoppedOld=$true
+    } else {
+        Log 'HostPid=0: no listener, safely skipping process termination'
     }
     Start-Sleep -Seconds 2
     foreach ($port in @(8765,8766)) {
@@ -204,18 +245,19 @@ try {
 
     if ($switched) {
         try {
-            # Stop only the new VMO backend, if present.
-            $newService = Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($newService) {
-                $proc = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $newService.OwningProcess) -ErrorAction SilentlyContinue
-                if ($proc -and $proc.Name -match '^python(w)?\.exe$' -and $proc.CommandLine -match 'app\.unified_server') {
-                    Stop-Process -Id $proc.ProcessId -Force
-                    Start-Sleep -Seconds 2
+            $newId=Get-VerifiedVMOPid $Version 0
+            if ($newId -gt 0) {
+                Stop-Process -Id $newId -Force -ErrorAction Stop
+                Start-Sleep -Seconds 2
+            }
+            foreach ($port in @(8765,8766)) {
+                if (@(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue).Count -gt 0) {
+                    throw ('Rollback blocked: port ' + $port + ' is occupied')
                 }
             }
             Restore-OldCode
             Launch-Host
-            if (Probe-Version '' 20) {
+            if (Probe-Version $oldVersion 20) {
                 Write-State 'rolled_back' ('Update failed; prior code restored: ' + $errorMessage)
             } else {
                 Write-State 'failed' ('Update failed; prior Host not healthy after rollback: ' + $errorMessage)

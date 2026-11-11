@@ -2,7 +2,7 @@
 # Run as the SAME logged-in Windows user that runs VMware/Host, not SYSTEM.
 param(
     [string]$Target = 'D:\VMware\VM-Orchestrator',
-    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.45.zip')
+    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.48.zip')
 )
 $ErrorActionPreference='Stop'
 try {
@@ -51,18 +51,12 @@ try {
     } else {
         Write-Warning 'SHA256 sidecar not found. Download the matching checksum from the GitHub Release.'
     }
+    # The detached updater rechecks BOTH port owners and the authenticated
+    # VMO health/version before terminating a running Host process. Passing
+    # 0 is valid when no Host was running during recovery startup.
     $hostPid=0
-    $listener=Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($listener) {
-        $p=Get-CimInstance Win32_Process -Filter ("ProcessId="+$listener.OwningProcess) -ErrorAction Stop
-        if (-not $p -or $p.Name -notmatch '^python(w)?\.exe$' -or
-            $p.CommandLine -notmatch 'app\.unified_server') {
-            throw 'Port 8765 is owned by an unknown process. Refusing to replace it.'
-        }
-        $hostPid=[int]$p.ProcessId
-    }
     Write-Host "VMO recovery target: $Target" -ForegroundColor Cyan
-    Write-Host "Updating to $version; existing Host PID: $hostPid" -ForegroundColor Cyan
+    Write-Host "Updating to $version; Host ownership will be verified by detached updater" -ForegroundColor Cyan
     Write-Host 'The existing code is backed up before replacement. Customer data is preserved.' -ForegroundColor Cyan
     & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $runner `
         -ZipPath $ZipPath -ExpectedSha256 $expected -Target $Target -HostPid $hostPid -Version $version
