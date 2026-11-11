@@ -15,7 +15,7 @@
 .vmo-secret-actions{display:flex;gap:10px;justify-content:flex-end}.vmo-secret-actions button{border:1px solid #b5bec9;border-radius:8px;padding:9px 15px;cursor:pointer;background:#edf2f7;color:#1a2638}
 .vmo-secret-actions button:first-child{background:#225dc1;color:#fff;border-color:#225dc1}.vmo-secret-card small{min-height:18px;color:#1f6b3e}
 
-.vmo-announcement-overlay:not([hidden]){position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:20px}.vmo-announcement-box{background:var(--surface,#fff);color:var(--text,#222);width:min(600px,100%);max-height:80vh;overflow:auto;border-radius:12px;padding:24px;box-shadow:0 12px 40px rgba(0,0,0,.25)}.vmo-announcement-box button{margin-top:18px}#selfActionSelect{min-width:220px;max-width:100%;flex:1}
+#selfActionSelect{min-width:220px;max-width:100%;flex:1}
 
 /* v1.4.36 · roomier customer portal and self-service controls */
 .wrapper{max-width:1440px;padding:28px 30px}
@@ -30,11 +30,11 @@
 .self-service-panel .divider{margin:18px 0}
 .self-service-panel #selfHistory{margin-top:8px}
 .self-service-panel #selfHistory .item{padding:12px 14px}
-.vmo-announcement-box{width:min(760px,100%);border-radius:18px;padding:34px;max-height:85vh}
+
 .vmo-secret-card{width:min(680px,100%);border-radius:18px;padding:28px}
 .app-viewer iframe{height:min(82vh,950px);min-height:600px}
 @media(max-width:1000px){.cols{grid-template-columns:1fr}.wrapper{padding:20px}.self-service-panel{min-height:auto}}
-@media(max-width:600px){.wrapper{padding:12px}.panel,.summary{padding:18px}.self-service-controls{grid-template-columns:1fr}.self-service-controls button{width:100%}.vmo-announcement-box{padding:24px}.vmo-secret-card{padding:22px}.app-viewer iframe{min-height:450px}}
+@media(max-width:600px){.wrapper{padding:12px}.panel,.summary{padding:18px}.self-service-controls{grid-template-columns:1fr}.self-service-controls button{width:100%}.vmo-secret-card{padding:22px}.app-viewer iframe{min-height:450px}}
 
 /* Compact five-row execution histories; review status is informational only. */
 .record-item{gap:12px;align-items:center;min-width:0;padding:12px 14px}
@@ -47,3 +47,41 @@
 .record-state.failed{color:#a54249;background:#fff0f0}
 .record-state.review{color:#9b641d;background:#fff5e4}
 @media(max-width:420px){.record-item{align-items:start}.record-state{font-size:10px;padding:4px 7px}.record-name{font-size:12px}}
+
+/* Customer announcements: same safe plain-text whitespace rules as admin preview. */
+.vmo-announcement-overlay:not([hidden]){
+  position:fixed;inset:0;z-index:11000;display:flex;align-items:center;justify-content:center;
+  padding:clamp(12px,3vw,30px);background:rgba(12,26,51,.67);backdrop-filter:blur(3px)
+}
+.vmo-announcement-overlay[hidden]{display:none!important}
+.vmo-announcement-box{
+  width:min(680px,100%);max-height:min(86vh,800px);max-height:min(86dvh,800px);
+  overflow:hidden;display:flex;flex-direction:column;min-height:0;
+  padding:0;border:1px solid #e4e9f2;border-radius:17px;background:#fff;color:#1a2b48;
+  box-shadow:0 24px 74px rgba(5,17,43,.26)
+}
+.vmo-announcement-head{
+  flex:none;display:block;margin:0;padding:25px 30px 20px;
+  border-bottom:1px solid #e8edf5;background:linear-gradient(115deg,#f4f8ff,#fff)
+}
+.vmo-announcement-kicker{display:block;margin-bottom:7px;font-size:10px;font-weight:750;letter-spacing:.075em;color:#5c7eaf}
+.vmo-announcement-head h2{margin:0;font-size:23px;line-height:1.4;color:#20395f}
+.vmo-announcement-content{
+  flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  padding:24px 30px;color:#293c56;background:white;
+  font-size:15px;line-height:1.88;font-weight:400;letter-spacing:0;
+  white-space:break-spaces;overflow-wrap:anywhere;word-break:normal;tab-size:4;
+  text-align:left;text-indent:0;unicode-bidi:plaintext
+}
+.vmo-announcement-error{flex:none;margin:0 30px 10px;padding:9px 12px;border:1px solid #f8c8ce;border-radius:8px;background:#fff3f4;color:#a52737;font-size:12px}
+.vmo-announcement-footer{flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:17px 30px;background:#f9fbff;border-top:1px solid #e8edf5}
+.vmo-announcement-footer>span{font-size:12px;color:#73829a}
+.vmo-announcement-footer button{margin:0;min-height:43px;min-width:117px;padding:10px 20px;font-weight:700;border-radius:9px}
+.vmo-announcement-footer button:focus-visible{outline:3px solid #8aaeff;outline-offset:2px}
+@media(max-width:600px){
+  .vmo-announcement-overlay:not([hidden]){padding:12px}
+  .vmo-announcement-head{padding:18px 19px 15px}
+  .vmo-announcement-head h2{font-size:20px}
+  .vmo-announcement-content{padding:19px;font-size:14px;line-height:1.85}
+  .vmo-announcement-footer{padding:13px 19px;flex-wrap:wrap}
+}

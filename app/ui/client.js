@@ -2,7 +2,7 @@
 const bjtTime = (value,withZone=true) => {const d=new Date(value);if(Number.isNaN(d.getTime()))return '时间未知';return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(d)+(withZone?' (北京时间)':'');};
 const $ = id=>document.getElementById(id);
 let csrf='', current=null, pending=false, appSignature='', activeApp='', selfActionSignature='', selfHistorySignature='';
-let selfActionCatalog=[], displayedAnnouncement=null;
+let selfActionCatalog=[], displayedAnnouncement=null, announcementAcknowledging=false;
 function show(msg,isError=false){const n=$('notice');n.textContent=msg;n.className='notice show'+(isError?' error':'');}
 async function req(path,method='GET',body){const headers={};if(method!=='GET')headers['X-Client-CSRF']=csrf;if(body)headers['Content-Type']='application/json';
  const r=await fetch('/client/api/'+path,{method,credentials:'same-origin',headers,cache:'no-store',body:body?JSON.stringify(body):undefined});
@@ -157,19 +157,37 @@ function renderSelfHistory(payload){
  }
  if(!list.length)target.append(element('p','暂无自助操作记录。','muted'));
 }
+function announcementBody(raw){
+ // Preserve intentional paragraphs, blank lines and indentation without HTML parsing.
+ return String(raw??'').replace(/\r\n?/g,'\n');
+}
 async function checkCustomerAnnouncement(){
  if(document.hidden)return;
- try{const data=await req('announcement');const a=data.announcement;
+ try{
+   const data=await req('announcement'), a=data.announcement;
    if(!a||displayedAnnouncement===a.id)return;
-   displayedAnnouncement=a.id;$('customerAnnouncementText').textContent=a.body;
+   displayedAnnouncement=a.id;
+   $('customerAnnouncementText').textContent=announcementBody(a.body);
+   $('customerAnnouncementError').textContent='';
+   $('customerAnnouncementError').hidden=true;
    $('customerAnnouncementModal').hidden=false;
+   $('customerAnnouncementAck').focus();
  }catch(e){console.warn('公告检查失败',e.message);}
 }
 async function acknowledgeCustomerAnnouncement(){
- if(!displayedAnnouncement)return;
- try{await req('announcement/'+encodeURIComponent(displayedAnnouncement)+'/ack','POST',{});
+ if(!displayedAnnouncement||announcementAcknowledging)return;
+ announcementAcknowledging=true;
+ const button=$('customerAnnouncementAck');button.disabled=true;
+ try{
+   await req('announcement/'+encodeURIComponent(displayedAnnouncement)+'/ack','POST',{});
    $('customerAnnouncementModal').hidden=true;
- }catch(e){show('公告确认失败：'+e.message,true);}
+   $('customerAnnouncementError').hidden=true;
+   $('refresh').focus();
+ }catch(e){
+   const error=$('customerAnnouncementError');
+   error.textContent='确认失败：'+e.message+'。请稍后重试。';
+   error.hidden=false;
+ }finally{announcementAcknowledging=false;button.disabled=false;}
 }
 async function refreshSelfHistory(){try{renderSelfHistory(await req('self-actions/history'));}catch(e){show('自助任务状态同步失败：'+e.message,true);}}
 function launchForm(gateway,ticket,target){

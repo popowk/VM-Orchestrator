@@ -1,96 +1,44 @@
-# VM Orchestrator v1.4.40（非阻塞审核 + 系统自动更新 + 远程预览）
+# VM Orchestrator — 功能总览（v1.4.43）
 
-本项目用于 Windows + VMware Workstation Pro 宿主机，集成思博客户业务、独立 Guest Agent、客户门户与远程运维。
+VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机运营管理系统。正式发布包仅包含运行程序与必要安装/运维脚本；此文件为唯一的产品说明。
 
-## 目录结构
+## 主要功能
 
-```text
-VM-Orchestrator-v1.4.39/
-├─ Install-All.cmd           # 一键安装 / 原地升级（请先停止 8765/8766）
-├─ Install-All.ps1           # 升级备份与部署逻辑
-├─ Start-VM-Orchestrator.cmd # 唯一服务启动入口：1 个 Python PID、2 个隔离监听端口
-├─ Manage.cmd                # 账户、密钥、网络、防火墙、开机启动等统一管理菜单
-├─ app/                      # 宿主机后端 API + 管理/客户 UI
-│  └─ ui/admin.js            # 管理后台单一 JS 文件（已合并五个旧脚本）
-├─ guest_agent/              # 客户 Windows 内运行的 Agent 原始分发源
-├─ integrations/sibhosting/  # 思博服务端 PHP 插件
-├─ integrations/app-report/  # 软件上报的接入示例
-├─ scripts/host/             # 管理菜单及启动器调用的内部实现
-├─ scripts/guest/            # Sysprep/OOBE/Guest 的原始实现，供单独模板工具使用
-└─ docs/                     # 集成说明与版本历史
-```
+- **统一后台**：管理员登录、CSRF 防护、客户实例和商品模板绑定、实例状态、资源配额、快照、开关机、续费及到期策略。
+- **思博业务系统**：使用 `integrations/sibhosting/public/plugins/host/vmo_vmware` 中的 v1.3.3 插件；支持订单开通、暂停、恢复、终止、续费与到期同步、状态/部署任务查询，以及思博 V3 `template + vars` 客户详情页。**思博插件安装在思博服务器，升级 VMO Host 不会自动替换已安装的 PHP 插件。**
+- **客户门户**：一次性票据登录、服务状态、截图、快照和关机/重装自助、执行历史、限额、公告弹窗。公告按原文纯文本保留换行、空行、缩进，后台预览与客户端使用一致的空白字符规则。
+- **远程运维**：WSS Guest Agent、CMD（8,000 字符）、PowerShell（12,000 字符）远程命令、实时状态、WSS 诊断、可开启/关闭的约 1 秒截图预览。
+- **Guest Agent V2**：HTTPS/WSS 身份认证、心跳和指令、自动检测匹配版本并安全升级；旧 Agent 的独立 V1 文件为兼容既有客户保留。
+- **系统更新**：管理员检查 GitHub Releases，一键下载并校验 SHA-256；独立 PowerShell 接管、备份、重启、健康验证及失败回滚。首次在正式宿主机操作前应备份并验证回滚。
+- **网络与权限**：Host 8765 管理端与 Guest 8766 HTTPS 网关运行在统一 Python 后端进程中，权限隔离，客户不得访问管理员 API。
 
-**Windows 10 模板准备脚本独立分发**：下载 `VMO-Win10-Template-Kit-v1.4.35.zip`（与本次主程序兼容，无需重装模板工具），仅在未封存的 BUILD 克隆机上使用，不要在客户机上运行 Sysprep。
+## 目录说明
 
-## 安装、运行、维护
+| 位置 | 用途 |
+| --- | --- |
+| `Install-All.cmd` | 首次安装或手动升级入口 |
+| `Start-VM-Orchestrator.cmd` | 启动服务 |
+| `Manage.cmd` | 日常管理菜单 |
+| `Repair-Stuck-Update.cmd` | Windows 更新卡住时的恢复入口 |
+| `app/` | Host、API、授权、业务逻辑与后台/客户 UI |
+| `guest_agent/` | Guest Agent V1 兼容层、V2 服务及安装脚本 |
+| `scripts/host/` | Host 安装、网络、更新器和维护模块 |
+| `scripts/guest/` | Win10 模板、OOBE 和注册工具 |
+| `integrations/sibhosting/.../vmo_vmware/` | 可部署的思博 V3 插件 v1.3.3 |
+| `integrations/app-report/` | 应用状态上报示例 JSON |
+| `tools/`、`.github/` | 源码发布及 Release 构建（正式更新 ZIP 不包含） |
 
-1. 停止旧版 8765 管理端与 8766 Guest 网关；备份 `D:\VMware\VM-Orchestrator` 和客户 VM。
-2. 从 ZIP 解压到不同于正式安装路径的文件夹，运行 `Install-All.cmd`。安装器备份历史文件，**不会删除已有数据库/DPAPI 密钥/客户虚拟机**。
-3. 用 VMware Workstation 所属的 Windows 登录用户运行 `Start-VM-Orchestrator.cmd`，管理端默认 `http://127.0.0.1:8765`。
-4. 首次初始化管理员账户执行 `Manage.cmd account`；其他维护项目直接双击 `Manage.cmd` 查看菜单。
-5. 管理页面无法切换时，用 Ctrl+Shift+R 强制刷新，检查 `/ui/admin.js?v=1.4.40` 返回 HTTP 200（需要登录）。
+## 安装与升级
 
-## 已修复的页面无法点击问题
+1. Windows 账户需具备 VMware、Python、PowerShell 和所需文件权限。建议先备份整个安装目录、`data/`、虚拟机目录与配置密钥。
+2. 解压到与已安装目录**不同**的位置，在旧版 8765/8766 停止后使用 `Install-All.cmd` 或 `Install-All.ps1` 安装。不要直接删除 `data`，也不要在模板机里预置真实客户注册信息。
+3. 打开 `http://127.0.0.1:8765/health` 确认版本及健康状态，再测试后台、WSS、客户门户及一台测试 VM。
+4. 将 `integrations/sibhosting/public/plugins/host/vmo_vmware/` 整个目录复制到思博服务器对应插件路径，保留插件 ID `vmo_vmware`，重启 PHP-FPM/清理必要模板缓存后验证客户端详情页及一次性票据登录。
+5. 生产更新建议经管理后台「系统更新」获取 GitHub 正式 Release；需要先在备份环境验收 Windows 独立更新/回滚。
 
-旧版页面引用 `/ui/biz-workspace.js`，但后端**没有为它注册路由**，因此点击左侧分组及「调整额度」不能可靠切换。新版把 `ui.js`、`business-admin.js`、`biz-workspace.js`、`self-service-admin.js`、`remote-admin.js` 合并成一份 `admin.js`，由单一已鉴权路由供应；也为该 JS/CSS 加上 `no-store`，避免升级后浏览器加载旧文件。客户额度按钮会进入「公告与额度」并自动填写实例号。
+## 运维及安全提醒
 
-## 安全边界
-
-- 8765 管理 API 和 8766 Guest HTTPS/WSS 仍隔离；不能向公网/客户网段直接公开 8765。
-- 单进程只合并了两套 Python Web 服务；VMware vmrun 和客户 VM 内 Guest Agent 必须独立运行。
-- 客户额度、公告、商品模板映射及订阅数据沿用旧数据结构，不能清空或重置已有数据库。
-- 测试脚本不进生产 ZIP；必要的安全认证、运行诊断及维护脚本仍保留。
-
-## 验证范围
-
-源码静态检查与本地 HTTP/浏览器回归通过；尚需在真实 Windows 10 + VMware Workstation Pro、爱快 ACL、思博插件环境进行完整升级验收。建议先备份并在非生产环境验证。
-
-## v1.4.38
-
-- 客户自助操作选中后可点击；若服务器检测到执行中或结果待核对，按钮明确显示「查看执行限制」，**不会向 Guest 重复提交命令**。解除阻塞需管理员确认，或等待任务安全完结。
-- 修复部分非 HTTPS 环境缺少 `crypto.randomUUID()` 时点击自助操作失败的问题，采用 `crypto.getRandomValues()` 生成随机 UUIDv4。
-- 「最近执行记录」显示实际操作名称、中文状态、北京时间日期时间（不再重复附加“北京时间”），仅展示最新 5 条。旧任务不在最近 5 条之内仍参与后端阻塞判断。
-- 「最近任务」显示操作中文名称/状态，前后端均限制最新 5 条。
-- 公告支持换行、空行、缩进，后台增加实时展示预览；保存时统一不同系统的换行符。
-- 自动迁移历史自助执行记录的操作名称；新任务将操作名称固化到历史记录，未来删除操作也不会使记录失去名称。
-
-## v1.4.36
-
-- 修复客户端旧模板失效时重装失败：同一商品当前已封存、VMX 文件存在的模板可安全回退，操作附审计记录，不放宽跨商品模板权限。
-- 管理后台客户自助操作区重新排版为列表 / 编辑 / 任务区，新增筛选与统计。
-- 客户页面放大内容宽度、自助操作选择框、弹窗；客户端 JS/CSS 禁止缓存，避免升级后旧资源残留。
-
-## v1.4.36 客户自助任务防卡死修复
-
-- 每次客户查看执行记录或提交操作前，主动同步并回收 Host 远程命令的过期状态。
-- 从未被 Guest 领取的命令队列过期后释放锁；超过 20 分钟仍从未领取的软件更新，先原子取消 Guest 任务，再释放锁。
-- 已领取但失联/超时的命令，或 10 分钟无认领结果、90 分钟无更新进度的软件任务，不自动重试；转为人工核对状态。
-- 管理员在「思博客户服务 → 客户自助 → 客户执行任务」核对 Guest 日志、当前进程及更新结果后，才可以点击「核对后解除阻塞」。如果同 VM 仍有待执行命令或软件更新，后台拒绝解除。
-- 原有执行记录/审计/客户数据保留；客户端界面在等待或需人工核查时禁用重复提交按钮。
-- 数据库预约写入使用 `BEGIN IMMEDIATE`，防止多服务实例同时放行同一 VM。
-- 提示：真正运行中的任务不能强制自动清除；客户端显示状态刷新及管理员核查指引。
-
-
-## v1.4.38
-
-- 客户端始终显示「执行操作」，不再显示「查看执行限制」或审核限制提示。
-- `UNKNOWN`、`TIMED_OUT`、`VERIFY_REQUIRED` 仅作为历史/后台核对状态，不再锁定后续自助命令；也不触发同一操作的 30 秒冷却。
-- 只有仍处于 `RESERVING`、`QUEUED`、`CLAIMED`、`RUNNING` 的操作才继续阻止同 VM 的并发执行；请求 ID 幂等保护、客户权限、在线校验保留。
-- 后台「核对后解除阻塞」改称「标记已核对」，只变更审核记录，不再决定客户能否执行。
-
-**提示：** 对于执行结果未知的命令，可能存在 Guest 端仍在运行的外部进程。再次点击可能产生副作用，建议仅配置可安全重复的管理员预设操作。
-
-
-## v1.4.39 · 在客户自助非阻塞修复版基础上补齐更新与运维
-
-- **保留用户上传版本的非阻塞审核逻辑**：UNKNOWN / TIMED_OUT / VERIFY_REQUIRED 不再阻塞新的客户自助命令，但未完成的任务仍不允许同 VM 并发。
-- 管理后台增加「系统更新」，使用 `popowk/VM-Orchestrator` GitHub Releases（公开仓库无需 Token），执行下载、校验、备份、重启与失败回滚。
-- 远程运维命令限制：CMD 8,000、PowerShell 12,000 字符；长命令须先升级 Guest Agent v2.0.21。
-- WSS 诊断上方增加按需开启的截图小窗，约 1 秒更新一次；退出页面、切换 VM 或隐藏标签后自动停用。
-- 运行时数据、密钥、证书及虚拟机文件均不纳入 Release。
-- 公开源码不包含客户数据库/令牌/真实证书；如有真实部署凭据请仅在宿主机设置。
-- 生产使用前在 Windows/VMware 宿主机测试升级及回滚。
-
-## v1.4.40: Guest Agent 自动更新与 WSS 分类日志
-
-请参阅 `docs/v1.4.40-agent-updates.md`。Host 会在 Agent 成功建立 WSS 并上报版本后自动为旧版生成专属升级包，受任务排队、SHA-256 校验和重试间隔限制。默认开启，设置 `VMO_GUEST_AGENT_AUTO_UPDATE=0` 关闭。无须每台 Guest 另装更新守护进程。
+- 8765 管理端不要直接暴露到公网，远程客户只允许访问必要的客户路由；业务密钥不能与管理员密钥混用。
+- 保留 Windows Host 与 Guest 的数据库、证书、DPAPI 密钥、客户身份与安装数据；代码升级不得覆盖它们。
+- 更新检查和 SHA-256 校验解决完整性与传输差错，不等同于签名验证；管理后台应限制管理员权限。
+- 目前发布包的语法、HTTP 和模拟场景可测试，但实际 VMware Workstation、思博环境、Windows 服务重启与回滚仍需在目标机器验收。

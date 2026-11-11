@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.42 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.43 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -797,7 +797,7 @@ window.VMOSelfService=(()=>{
      $('customerAnnouncementEnabled').checked=!!a;
    }catch(e){toast('读取公告与额度失败：'+e.message,true);}
  }
- function updateAnnouncementPreview(){const text=$('customerAnnouncementBody').value; $('customerAnnouncementPreview').textContent=text||'公告内容将显示在这里';}
+ function updateAnnouncementPreview(){const text=$('customerAnnouncementBody').value.replace(/\r\n?/g,'\n');$('customerAnnouncementPreview').textContent=text||'公告内容将显示在这里';}
  function quotaValues(prefix){return {
    snapshot_limit:Number($(prefix+'Snapshots').value),
    monthly_restore_limit:Number($(prefix+'Restores').value),

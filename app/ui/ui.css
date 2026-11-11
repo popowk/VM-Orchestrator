@@ -168,7 +168,7 @@
 #customerAnnouncementForm .announcement-hint{font-size:11px;color:#73839b;margin-top:3px}
 #customerAnnouncementForm .announcement-preview{display:grid;gap:8px;margin-top:10px;padding:14px 16px;border:1px solid #e2e9f3;border-radius:10px;background:#f7faff;font-weight:400;color:#314663}
 #customerAnnouncementForm .announcement-preview strong{font-size:12px;color:#60728f}
-#customerAnnouncementPreview{font-size:13px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;max-height:230px;overflow:auto}
+#customerAnnouncementPreview{font-size:13px;line-height:1.8;white-space:break-spaces;overflow-wrap:anywhere;word-break:normal;tab-size:4;max-height:230px;overflow:auto}
 
 /* 1 fps opt-in remote screen preview: compact, no external iframe or websocket. */
 .remote-preview-head{display:flex;align-items:flex-start;gap:12px;justify-content:space-between}

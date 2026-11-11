@@ -1,7 +1,16 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>我的 Windows · VM Orchestrator</title><link rel="stylesheet" href="/ui/client.css?v=1.4.42"><script src="/ui/client.js?v=1.4.42" defer></script></head>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>我的 Windows · VM Orchestrator</title><link rel="stylesheet" href="/ui/client.css?v=1.4.43"><script src="/ui/client.js?v=1.4.43" defer></script></head>
 <body><div class="wrapper">
 <header><div class="logo">V</div><div><h1>我的 Windows 云主机</h1></div><div class="spacer"></div><button id="refresh" class="light">刷新状态</button><button id="logout" class="light">退出</button></header>
-<div id="notice" class="notice" role="status"></div><div id="customerAnnouncementModal" class="vmo-announcement-overlay" hidden><section class="vmo-announcement-box" role="dialog" aria-modal="true" aria-labelledby="customerAnnouncementTitle"><h2 id="customerAnnouncementTitle">客户公告</h2><p id="customerAnnouncementText" style="white-space:pre-wrap;overflow-wrap:anywhere"></p><button id="customerAnnouncementAck" type="button">我已阅读</button></section></div>
+<div id="notice" class="notice" role="status"></div><div id="customerAnnouncementModal" class="vmo-announcement-overlay" hidden>
+  <section class="vmo-announcement-box" role="dialog" aria-modal="true" aria-labelledby="customerAnnouncementTitle" aria-describedby="customerAnnouncementText">
+    <header class="vmo-announcement-head">
+      <div><span class="vmo-announcement-kicker">服务通知 · SERVICE NOTICE</span><h2 id="customerAnnouncementTitle">客户公告</h2></div>
+    </header>
+    <div id="customerAnnouncementText" class="vmo-announcement-content"></div>
+    <p id="customerAnnouncementError" class="vmo-announcement-error" role="alert" hidden></p>
+    <div class="vmo-announcement-footer"><span>请阅读公告后确认</span><button id="customerAnnouncementAck" type="button" class="primary">我已阅读</button></div>
+  </section>
+</div>
 <main id="main" hidden>
 <section class="summary"><div><div class="muted">主机</div><h2 id="vmName">—</h2><p id="serviceName">—</p><p id="serviceExpiry" class="muted">到期时间：—</p><p id="vmIp" class="muted">客户机 IP 尚未上报</p></div><div class="facts"><div><small>运行状态</small><strong id="power">—</strong></div><div><small>Windows 初始化</small><strong id="vmstate">—</strong></div><div><small>Guest Agent</small><strong id="guest">—</strong></div></div></section>
 <div class="cols"><section class="panel screen-panel"><div class="head"><h3>实时屏幕截图</h3><button id="screenRefresh" class="light">刷新画面</button></div><div class="monitor"><img id="screenImage" alt="当前 Windows 虚拟机屏幕" hidden><div id="screenEmpty">点击刷新，获取一次屏幕截图。此处不提供远程鼠标键盘控制。</div></div><small id="screenStatus" class="muted"></small></section>

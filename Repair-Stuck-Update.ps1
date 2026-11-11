@@ -2,7 +2,7 @@
 # Run as the SAME logged-in Windows user that runs VMware/Host, not SYSTEM.
 param(
     [string]$Target = 'D:\VMware\VM-Orchestrator',
-    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.42.zip')
+    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.43.zip')
 )
 $ErrorActionPreference='Stop'
 try {
@@ -14,6 +14,10 @@ try {
     if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
         throw "Update archive not found: $ZipPath"
     }
+    if ([IO.Path]::GetFileName($ZipPath) -notmatch '^VM-Orchestrator-v([0-9]+\.[0-9]+\.[0-9]+)\.zip$') {
+        throw 'Expected VM-Orchestrator-vX.Y.Z.zip archive filename'
+    }
+    $packageVersion=$Matches[1]
     $stateDir=Join-Path $Target 'data\updates'
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
     Add-Type -AssemblyName System.IO.Compression
@@ -22,16 +26,17 @@ try {
     $version=$null
     $runner=Join-Path $stateDir 'Repair-Updater.ps1'
     try {
-        $verEntry=$zip.GetEntry('VM-Orchestrator-v1.4.42/VERSION')
-        $scriptEntry=$zip.GetEntry('VM-Orchestrator-v1.4.42/scripts/host/Apply-GitHubUpdate.ps1')
+        $verEntry=$zip.GetEntry('VM-Orchestrator-v' + $packageVersion + '/VERSION')
+        $scriptEntry=$zip.GetEntry('VM-Orchestrator-v' + $packageVersion + '/scripts/host/Apply-GitHubUpdate.ps1')
         if (-not $verEntry -or -not $scriptEntry) { throw 'Missing VERSION or detached updater in ZIP' }
         $sr=New-Object IO.StreamReader($verEntry.Open())
         try { $version=$sr.ReadToEnd().Trim() } finally { $sr.Dispose() }
-        if ($version -ne '1.4.42') { throw "Unsupported recovery archive version: $version" }
+        if ($version -ne $packageVersion) { throw "Unsupported recovery archive version: $version" }
         $sourceStream=$scriptEntry.Open()
         $targetStream=[IO.File]::Open($runner,[IO.FileMode]::Create,[IO.FileAccess]::Write)
         try { $sourceStream.CopyTo($targetStream) } finally { $targetStream.Dispose();$sourceStream.Dispose() }
-        # Normalize the updater to UTF-8 BOM for Windows PowerShell 5.1.
+        # PowerShell 5.1 does not reliably parse UTF-8-without-BOM files with non-ASCII literals.
+        # Normalize the extracted updater regardless of the ZIP build environment.
         $runnerCode = [IO.File]::ReadAllText($runner, [Text.Encoding]::UTF8)
         [IO.File]::WriteAllText($runner, $runnerCode, (New-Object System.Text.UTF8Encoding($true)))
     } finally { $zip.Dispose() }
@@ -39,10 +44,10 @@ try {
     $shaPath=$ZipPath+'.sha256'
     if (Test-Path -LiteralPath $shaPath -PathType Leaf) {
         $line=(Get-Content -LiteralPath $shaPath -Raw).Trim()
-        if ($line -notmatch '^([a-fA-F0-9]{64})\s+\*?VM-Orchestrator-v1\.4\.42\.zip$') {
+        if ($line -notmatch '^([a-fA-F0-9]{64})\s+\*?VM-Orchestrator-v[0-9]+\.[0-9]+\.[0-9]+\.zip$') {
             throw 'Invalid SHA256 manifest format'
         }
-        if ($Matches[1].ToLowerInvariant() -ne $expected) { throw 'ZIP SHA256 mismatch' }
+        if ($Matches[1].ToLowerInvariant() -ne $expected -or $line -notmatch ('\s+\*?' + [regex]::Escape([IO.Path]::GetFileName($ZipPath)) + '$')) { throw 'ZIP SHA256 mismatch' }
     } else {
         Write-Warning 'SHA256 sidecar not found. Download the matching checksum from the GitHub Release.'
     }
