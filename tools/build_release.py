@@ -4,6 +4,7 @@ Run in a clean checkout. Never package data, local secrets, git objects, or test
 """
 from pathlib import Path
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -41,6 +42,15 @@ with ZipFile(archive, 'w', ZIP_DEFLATED, compresslevel=9) as z:
     for path in files:
         rel = path.relative_to(ROOT).as_posix()
         z.write(path, f'VM-Orchestrator-v{VERSION}/{rel}')
+    # Keep a reproducible inventory next to the installed release. Runtime
+    # cleanup can distinguish extra/modified files from the exact shipped set.
+    inventory = {path.relative_to(ROOT).as_posix(): {
+        'size': path.stat().st_size,
+        'sha256': hashlib.sha256(path.read_bytes()).hexdigest()
+    } for path in files}
+    z.writestr(f'VM-Orchestrator-v{VERSION}/release-manifest.json',
+               json.dumps({'version': VERSION, 'files': inventory},
+                          ensure_ascii=False, sort_keys=True, indent=2).encode('utf-8'))
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 (DEST / (NAME + '.sha256')).write_text(f'{digest}  {NAME}\n', encoding='ascii')
 print('Created:', archive)
