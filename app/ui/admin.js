@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.49 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.50 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -18,7 +18,7 @@ function VMOConnectEvents(){
 function VMOCloseEvents(){if(VMOEventSource){VMOEventSource.close();VMOEventSource=null;}}
 const $ = id => document.getElementById(id);
 const state = { csrf:'', templates:[], vms:[], jobs:[], capabilities:null, testVmId:null, viewingVm:null, activePage:'overview', busy:false, watched:new Set(), defaultTemplate:null, guests:[], packages:[], updateTasks:[], reinstalls:[], reinstallVm:null, packageSelections:{}, packageDirectories:{}, jobsPage:1, updatePage:1, jobsPaged:{items:[],page:1,pages:1,total:0}, updatesPaged:{items:[],page:1,pages:1,total:0} };
-const pages = { overview:'管理概览', vms:'虚拟机管理', templates:'黄金模板', updates:'软件更新', jobs:'任务记录', remote:'远程运维', clients:'思博客户服务', system:'系统更新' };
+const pages = { overview:'管理概览', vms:'虚拟机管理', templates:'黄金模板', updates:'软件更新', jobs:'任务记录', remote:'远程运维', clients:'思博客户服务', system:'系统更新', cleanup:'空间清理' };
 const statusName = { READY:'就绪', CREATING:'克隆中', ERROR:'异常', DELETING:'删除中', REINSTALLING:'重装中', REINSTALL_ERROR:'重装异常', DELETE_ERROR:'删除失败', SEALED_ATTESTED:'已封存', CANDIDATE:'待确认', ARCHIVED:'已归档', FILES_PURGING:'磁盘清理异常', FILES_DELETED:'文件已清理（保留历史）', POWERED_ON:'运行中', POWERED_OFF:'已关机', SUSPENDED:'挂起', UNKNOWN:'未知', QUEUED:'排队中', RUNNING:'执行中', SUCCEEDED:'成功', VERIFY_REQUIRED:'已执行，待版本核验', FAILED:'失败' };
 function el(tag, cls='', text='') { const v=document.createElement(tag); if(cls)v.className=cls; if(text!==undefined && text!==null)v.textContent=String(text); return v; }
 function btn(text, cls, fn, disabled=false) { let e=el('button','btn '+cls,text);e.type='button';e.disabled=disabled;e.addEventListener('click',fn);return e; }
@@ -39,7 +39,7 @@ function setLogin(visible){
   $('loginScreen').hidden=!visible;
   if(visible){state.csrf='';VMOCloseEvents();$('loginError').textContent='';}
 } 
-function navigate(page){if(!pages[page])return;const previous=state.activePage;if(previous==='remote'&&page!=='remote')window.VMORemote?.stopPreview();state.activePage=page;if(page==='clients')window.VMOClients?.refresh();else if(page==='remote')window.VMORemote?.refresh();else if(page==='system')window.VMOSystemUpdate?.load();else refresh();document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));$('pageTitle').textContent=pages[page];}
+function navigate(page){if(!pages[page])return;const previous=state.activePage;if(previous==='remote'&&page!=='remote')window.VMORemote?.stopPreview();state.activePage=page;if(page==='clients')window.VMOClients?.refresh();else if(page==='remote')window.VMORemote?.refresh();else if(page==='system')window.VMOSystemUpdate?.load();else if(page==='cleanup')window.VMOCleanup?.scan();else refresh();document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));$('pageTitle').textContent=pages[page];}
 async function refresh(){if(state.busy || !state.csrf)return;state.busy=true; try{
   const [tpl,vms,jobs,caps,defaults,guests,packages,updatesPaged,reinstalls,jobsPaged] = await Promise.all([
     request('/api/templates'),request('/api/vms'),request('/api/jobs'),request('/api/host/capabilities'),
@@ -507,7 +507,7 @@ function renderFleet(){
    }tasks.append(line);}
  renderPager('updatesPager',state.updatesPaged,page=>{state.updatePage=page;refresh();});
  const history=$('reinstallHistory');history.replaceChildren();if(!state.reinstalls.length)history.append(el('p','muted','暂无重装记录'));
- for(const x of state.reinstalls.slice(0,20)){const vm=state.vms.find(v=>v.id===x.vm_id);history.append(el('div','template-card',`${vm?.name||x.vm_id} · ${x.status} · 旧系统备份：${x.backup_path||'未生成'}`));}
+ for(const x of state.reinstalls.slice(0,20)){const vm=state.vms.find(v=>v.id===x.vm_id);history.append(el('div','template-card',`${vm?.name||x.vm_id} · ${x.status} · ${x.backup_deleted_at?'旧备份已清理：'+VMO_BJT(x.backup_deleted_at):'旧系统备份：'+(x.backup_path||'未生成')}`));}
 }
 async function sealTemplate(t){
  if(!confirm(`你是否亲自确认：\n1. 已执行 Sysprep /generalize 并关机\n2. 已检查并清除客户凭据\n3. 模板已关机且没有挂起\n4. 这些是人工声明，不能代替系统自动证明？`))return;
@@ -1283,5 +1283,89 @@ window.VMOSelfService=(()=>{
   });
   document.getElementById('sysCheckBtn')?.addEventListener('click',check);
   document.getElementById('sysInstallBtn')?.addEventListener('click',install);
+ });
+})();
+
+
+/* ===== cleanup center; never infer deletability from a directory name ===== */
+(function(){
+ 'use strict';
+ let candidates=[],scanning=false,deleting=false;
+ const fmt=n=>{const x=Number(n)||0;return x>=1073741824?(x/1073741824).toFixed(2)+' GB':
+          x>=1048576?(x/1048576).toFixed(1)+' MB':x>=1024?(x/1024).toFixed(1)+' KB':x+' B';};
+ const selected=()=>Array.from(document.querySelectorAll('.vmo-clean-select:checked')).map(c=>c.dataset.id);
+ function render(data){
+   candidates=data.items||[];
+   const out=$('cleanupProgramItems'),vms=$('cleanupVMBackups'),blocked=$('cleanupProtected');
+   if(!out||!vms||!blocked)return;
+   out.replaceChildren();vms.replaceChildren();blocked.replaceChildren();
+   const label={program_cache:'旧更新临时缓存',old_log:'旧更新日志',
+                code_backup:'历史代码备份',reinstall_backup:'重装 VM 备份'};
+   function section(item,root){
+     const row=el('div','template-card'),details=el('div');
+     const head=el('label','check-row');
+     const ck=el('input','vmo-clean-select');ck.type='checkbox';ck.dataset.id=item.id;
+     // Old VM backups and code rollback archives are NEVER selected by default.
+     ck.checked=!item.manual;
+     const name=el('strong','',item.title);head.append(ck,name);
+     details.append(head,el('small','',label[item.kind]+' · '+fmt(item.bytes)+' · '+item.files+' 个文件'));
+     details.append(el('small','',item.path));
+     row.append(details);root.append(row);
+   }
+   candidates.forEach(item=>section(item,item.kind==='reinstall_backup'?vms:out));
+   if(!out.childElementCount)out.append(el('p','muted','没有符合清理条件的程序文件。'));
+   if(!vms.childElementCount)vms.append(el('p','muted','没有通过安全检查的已完成重装备份。'));
+   for(const p of (data.protected||[])){
+     const row=el('div','template-card');row.append(el('strong','',p.reason||'受保护'),el('small','',p.path||''));blocked.append(row);
+   }
+   if(!blocked.childElementCount)blocked.append(el('p','muted','没有需要人工处理的候选项目。'));
+   $('cleanupSummary').textContent='可检查 '+candidates.length+' 项，合计 '+fmt(data.total_bytes)+
+       '；其中旧虚拟机备份 '+(data.reinstall_backups||0)+' 项。勾选后才会删除。';
+ }
+ async function scan(){
+   if(scanning||deleting)return;
+   scanning=true;$('cleanupSummary').textContent='正在核验文件目录及重装记录…';
+   try{render(await request('/api/system/cleanup/scan'));}
+   catch(e){$('cleanupSummary').textContent='扫描未通过：'+e.message;toast(e.message,true);}
+   finally{scanning=false;}
+ }
+ async function clean(){
+   if(scanning||deleting)return;
+   const keys=selected();
+   if(!keys.length)return toast('请先勾选需要清理的项目',true);
+   const choices=keys.map(k=>candidates.find(x=>x.id===k)).filter(Boolean);
+   const backups=choices.filter(x=>x.kind==='reinstall_backup');
+   const bytes=choices.reduce((x,y)=>x+y.bytes,0);
+   if(!confirm('即将永久清理 '+choices.length+' 项，约 '+fmt(bytes)+
+              '。已删除的数据不能恢复。是否继续？'))return;
+   if(backups.length&&!confirm('你单独标记了 '+backups.length+
+              ' 份旧虚拟机完整备份；它们可能包含旧系统、快照和客户文件。确认永久删除？'))return;
+   if(prompt('请输入“永久清理”确认此不可撤销的操作：','')!=='永久清理')return;
+   deleting=true;
+   try{
+     const result=await request('/api/system/cleanup/delete','POST',{
+       confirm_phrase:'永久清理',confirm_backups:backups.length>0,
+       items:choices.map(x=>({id:x.id,fingerprint:x.fingerprint}))
+     });
+     toast('清理完成：'+(result.deleted||[]).length+' 项，约 '+fmt(result.deleted_bytes));
+     await scanAfterDelete();
+     if(state.csrf)refresh();
+   }catch(e){toast('清理中断：'+e.message,true);await scanAfterDelete();}
+   finally{deleting=false;}
+ }
+ async function scanAfterDelete(){
+   try{render(await request('/api/system/cleanup/scan'));}
+   catch(e){$('cleanupSummary').textContent='请手动检查：'+e.message;}
+ }
+ window.VMOCleanup={scan};
+ window.addEventListener('DOMContentLoaded',()=>{
+   $('cleanupScanBtn')?.addEventListener('click',scan);
+   $('cleanupSelectSafeBtn')?.addEventListener('click',()=>{
+     document.querySelectorAll('.vmo-clean-select').forEach(c=>{
+       const item=candidates.find(x=>x.id===c.dataset.id);
+       c.checked=Boolean(item&&!item.manual);
+     });
+   });
+   $('cleanupDeleteBtn')?.addEventListener('click',clean);
  });
 })();

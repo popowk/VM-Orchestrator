@@ -135,6 +135,26 @@ jobs:
             echo "The launcher must exit when the Host stops" >&2
             exit 1
           fi
+      - name: Verify cleanup UI and authenticated API integration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          main = Path('app/main.py').read_text(encoding='utf-8')
+          html = Path('app/ui/index.html').read_text(encoding='utf-8')
+          js = Path('app/ui/admin.js').read_text(encoding='utf-8')
+          module = Path('app/cleanup.py')
+          assert module.is_file(), 'Cleanup module missing'
+          assert "from .cleanup import CleanupManager, CleanupError" in main
+          assert "'/api/system/cleanup/scan'" in main
+          assert "'/api/system/cleanup/delete'" in main
+          assert "dependencies=[Depends(authorized)]" in main
+          assert 'id="page-cleanup"' in html
+          assert 'data-page="cleanup"' in html
+          assert "VMOCleanup={scan}" in js
+          assert "backup_deleted_at" in js
+          print('PASS: cleanup UI and API are wired into this release')
+          PY
       - name: Build release ZIP and SHA-256
         run: python tools/build_release.py
       - name: Publish only a new release version

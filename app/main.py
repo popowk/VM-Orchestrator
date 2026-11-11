@@ -37,6 +37,7 @@ from .diagnostics import diagnose
 from .safety import assert_powered_off, assert_safe_vm_delete_dir, MAX_SNAPSHOTS, _is_reparse_point
 from .unattend import provisioning_status, read_secret
 from .admin_auth import AdminAuth, AdminLoginLocked
+from .cleanup import CleanupManager, CleanupError
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$')
 
@@ -163,7 +164,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     vmrun = vmrun or Vmrun(settings.vmrun_path)
     secret_root = settings.db_path.parent / 'provision-secrets'
     runner = JobRunner(store, vmrun, secret_root, settings.admin_key)
-    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.49',
+    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.50',
                   description='Local management of sealed templates and VMware Workstation VMs.')
 
     # UI session is an HttpOnly, SameSite=Strict cookie signed using a key derived
@@ -422,6 +423,8 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     # These routes remain on the privileged Host listener only.
     from .system_updates import UpdateService, UpdateError
     system_updater = UpdateService(Path(__file__).resolve().parent.parent)
+    cleanup_manager = CleanupManager(Path(__file__).resolve().parent.parent,
+                                     vms_root, settings.db_path, store, fleet, vmrun)
 
     class ApplySystemUpdate(BaseModel):
         version: str = Field(min_length=5, max_length=24)
@@ -447,6 +450,29 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         try:
             return system_updater.install(payload.version)
         except UpdateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+    class CleanupDeleteRequest(BaseModel):
+        items: list[dict] = Field(min_length=1, max_length=50)
+        confirm_phrase: str
+        confirm_backups: bool = False
+
+    @app.get('/api/system/cleanup/scan', dependencies=[Depends(authorized)])
+    def system_cleanup_scan():
+        try:
+            return cleanup_manager.scan()
+        except CleanupError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post('/api/system/cleanup/delete', dependencies=[Depends(authorized)])
+    def system_cleanup_delete(payload: CleanupDeleteRequest):
+        if payload.confirm_phrase != '永久清理':
+            raise HTTPException(status_code=422, detail='请输入永久清理以确认不可恢复的删除')
+        try:
+            return cleanup_manager.delete(payload.items,
+                                          confirm_backups=payload.confirm_backups)
+        except CleanupError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get('/api/host/capabilities', dependencies=[Depends(authorized)])

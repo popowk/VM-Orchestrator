@@ -2,7 +2,7 @@
 # Run as the SAME logged-in Windows user that runs VMware/Host, not SYSTEM.
 param(
     [string]$Target = 'D:\VMware\VM-Orchestrator',
-    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.49.zip')
+    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.50.zip')
 )
 $ErrorActionPreference='Stop'
 try {
