@@ -36,6 +36,7 @@ from .vmrun import VmrunError
 from .service_expiry import parse_utc, is_due, ExpiryScheduler
 from .self_service import SelfServiceStore, ActionInput, ToggleInput, ExecuteInput
 from .customer_settings import CustomerSettings
+from .client_output import customer_command_result
 
 REF_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$')
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$')
@@ -630,7 +631,7 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
     @app.get('/client/api/self-actions/history', include_in_schema=False)
     def client_self_action_history(s=Depends(client_service)):
         records=self_actions.reconcile(s['service_ref'],s['vm_id'])
-        # Never return command text, execution output, package path or Agent identity.
+        # Return bounded, redacted command output for the tenant's own VM only.
         history=[]
         for row in records:
             visible={k:row.get(k) for k in ('request_id','action_id','status','created_at','updated_at')}
@@ -638,18 +639,11 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
             action=self_actions.get(row['action_id']) if not row.get('action_label') else None
             visible['label']=row.get('action_label') or (action or {}).get('label') or '已删除的自助操作' 
             if row['action_kind']=='COMMAND' and row.get('operation_id'):
-                # Only publish the execution category, not the command, output,
-                # tokens, working directory or full remote operation metadata.
+                # Only this authenticated tenant's VM; never return source command,
+                # full result metadata, internal paths or Agent credentials.
                 op=remote.get(row['operation_id'])
                 if op and op.get('vm_id')==s['vm_id']:
-                    result=op.get('result') or {}
-                    if visible['status']=='SUCCEEDED':
-                        if result.get('launched') is True:visible['outcome']='START_ACCEPTED'
-                        elif result.get('exit_code')==0:visible['outcome']='EXIT_CODE_ZERO'
-                    elif visible['status'] in ('FAILED','TIMED_OUT'):
-                        if result.get('error')=='TimeoutExpired':visible['failure_reason']='等待结果超时，请使用后台或前台运行'
-                        elif isinstance(result.get('exit_code'),int):visible['failure_reason']='命令退出码 '+str(result['exit_code'])
-                        else:visible['failure_reason']='Guest 返回执行失败'
+                    visible.update(customer_command_result(op.get('result'),visible['status']))
             history.append(visible)
         blocking=self_actions.blocking_execution(s['service_ref'],s['vm_id'])
         # The blocker is independent from the five most recent entries.
