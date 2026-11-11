@@ -163,7 +163,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     vmrun = vmrun or Vmrun(settings.vmrun_path)
     secret_root = settings.db_path.parent / 'provision-secrets'
     runner = JobRunner(store, vmrun, secret_root, settings.admin_key)
-    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.45',
+    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.46',
                   description='Local management of sealed templates and VMware Workstation VMs.')
 
     # UI session is an HttpOnly, SameSite=Strict cookie signed using a key derived
@@ -852,55 +852,42 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
                     'fltmc >nul 2>&1\r\nif errorlevel 1 (\r\n'
                     '  echo ERROR: Right-click and Run as administrator.\r\n'
                     '  pause\r\n  exit /b 1\r\n)\r\n'
-                    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-GuestAgent.ps1" '
+                    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-GuestAgentV2.ps1" '
                     + args + '\r\nif errorlevel 1 (\r\n'
                     '  echo ERROR: Guest Agent install/repair failed.\r\n'
                     '  pause\r\n  exit /b 1\r\n)\r\n'
                     'echo Guest Agent code and task installed. Check enrollment in the Host UI.\r\npause\r\n')
         output=io.BytesIO()
         with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED) as z:
-            z.writestr('agent.py',(guest_dir/'agent.py').read_bytes())
-            # Full V2 installer payload, not just the small legacy v1 subset.
-            # OneClick-Register-Guest.ps1 validates unique per-VM identity and installs both stages.
+            # Single V2 service installer: enrollment and updates share one runtime.
             v2_files = (
-                'agent_v2.py','interactive_session.py','upload_directory.py','app_tunnel.py',
+                'agent_v2.py','runtime_core.py','agent-release.json','interactive_session.py','upload_directory.py','app_tunnel.py',
                 'ws_client.py','app_registry.py','local_app_report.py','windows_service.py',
                 'update_lifecycle.py','dsh_updates.py','quick_updates.py','quick_plugin_update.py',
                 'update_commands.py','user_update_exec.py','machine_identity.py','Probe-Gateway.py',
                 'Install-GuestAgentV2.ps1','Install-GuestAgentV2.cmd','Report-App-JSON.py',
                 'Report-App.cmd','Report-App-Startup.ps1','Configure-ManagedUpdates.ps1',
                 'Set-RemotePermissions.ps1','Enable-RemoteCommands.cmd','Disable-RemoteCommands.cmd',
-                'Register-AyuBridge-Interactive.ps1',
+                'Register-AyuBridge-Interactive.ps1','Check-V2.ps1',
             )
             for filename in v2_files:
                 z.writestr(filename,(guest_dir/filename).read_bytes())
             helper_dir=Path(__file__).resolve().parent.parent/'scripts'/'guest'
-            for filename in ('OneClick-Register-Guest.ps1','Set-Guest-AutoLogon.ps1'):
+            for filename in ('Set-Guest-AutoLogon.ps1',):
                 z.writestr(filename,(helper_dir/filename).read_bytes())
-            z.writestr('OneClick-Register-Guest.cmd',
-                '@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\n'
-                'fltmc >nul 2>&1\r\nif errorlevel 1 (echo Right-click and Run as administrator. & pause & exit /b 1)\r\n'
-                'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0OneClick-Register-Guest.ps1"\r\n'
-                'set "RC=%ERRORLEVEL%"\r\nif not "%RC%"=="0" echo Registration failed.\r\npause\r\nexit /b %RC%\r\n')
             z.writestr('Set-Guest-AutoLogon.cmd',
                 '@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\n'
                 'fltmc >nul 2>&1\r\nif errorlevel 1 (echo Run as administrator. & pause & exit /b 1)\r\n'
                 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Set-Guest-AutoLogon.ps1"\r\npause\r\n')
-            z.writestr('UPGRADE-V2.txt',
-                'For a NEW per-VM installer run OneClick-Register-Guest.cmd as Administrator.\r\n'
-                'It installs unique enrollment then V2 Automatic service; existing identity is preserved.\r\n'
-                'WSS only uses the existing HTTPS Gateway port 8766.\r\n')
-            z.writestr('Install-GuestAgent.ps1',(guest_dir/'Install-GuestAgent.ps1').read_bytes())
-            z.writestr('Check-GuestAgent.ps1',(guest_dir/'Check-GuestAgent.ps1').read_bytes())
             z.writestr('Configure-SnowLuma.ps1',(guest_dir/'Configure-SnowLuma.ps1').read_bytes())
             z.writestr('Configure-SnowLuma.cmd',(guest_dir/'Configure-SnowLuma.cmd').read_bytes())
             z.writestr('agent.json',json.dumps(cfg,ensure_ascii=False,indent=2))
             z.writestr('host-only-ca.pem',Path(ca_path).read_bytes())
             z.writestr('Install-ThisGuest.cmd',installer_cmd('-ConfigFile "%~dp0agent.json"'))
-            z.writestr('Repair-ThisGuest.cmd',installer_cmd('-Repair'))
+            z.writestr('Repair-ThisGuest.cmd',installer_cmd(''))
             z.writestr('Check-ThisGuest.cmd',
                        '@echo off\r\ncd /d "%~dp0"\r\nfltmc >nul 2>&1\r\nif errorlevel 1 (echo Run as administrator. & pause & exit /b 1)\r\n'
-                       'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Check-GuestAgent.ps1"\r\npause\r\n')
+                       'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Check-V2.ps1"\r\npause\r\n')
         return FastResponse(content=output.getvalue(),media_type='application/zip',headers={
             'Cache-Control':'no-store', 'Content-Disposition':f'attachment; filename="VMO-Guest-{vm_id}.zip"'})
 

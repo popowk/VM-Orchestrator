@@ -1,11 +1,9 @@
-$ErrorActionPreference='Continue'
+﻿$ErrorActionPreference='Continue'
 $name='VMO-GuestAgentV2'
 Write-Host '=== VMO Guest Agent V2 ===' -ForegroundColor Cyan
 Get-Service -Name $name -ErrorAction SilentlyContinue | Format-Table Name,Status,StartType
 Write-Host '=== Service executable / account ===' -ForegroundColor Cyan
 Get-CimInstance -ClassName Win32_Service -Filter "Name='$name'" -ErrorAction SilentlyContinue | Select-Object Name,State,StartMode,StartName,PathName | Format-List
-Write-Host '=== Legacy V1 task (expected missing) ===' -ForegroundColor Cyan
-Get-ScheduledTask -TaskName 'VMO-GuestAgent' -ErrorAction SilentlyContinue | Select-Object TaskName,State | Format-Table
 Write-Host '=== Latest WSS logs ===' -ForegroundColor Cyan
 $log=Join-Path $env:ProgramFiles 'VM-Orchestrator\GuestAgent\state\logs\agent-v2.log'
 if (Test-Path -LiteralPath $log -PathType Leaf) { Get-Content -LiteralPath $log -Tail 15 }

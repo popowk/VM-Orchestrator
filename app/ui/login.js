@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded',()=>{
      });
      const result=await response.json().catch(()=>({}));
      if(!response.ok || result.authenticated!==true){
-       throw new Error(response.status===401?'管理员账号或密码错误':(result.detail||'登录失败 (HTTP '+response.status+')'));
+       throw new Error(response.status===401?'账号或密码错误':(result.detail||'登录失败 (HTTP '+response.status+')'));
      }
      key.value='';
      // Hard navigation ensures the server authenticates before serving console HTML.

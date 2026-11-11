@@ -25,7 +25,7 @@ import urllib.request
 from urllib.parse import urlsplit
 try:
     from .ws_client import Websocket, WebsocketError
-    from . import agent as legacy
+    from . import runtime_core as runtime
     from .app_registry import read_registry, reported_apps, load_app_secret
     from .local_app_report import LocalReportServer
     from .machine_identity import verify_machine_binding
@@ -33,7 +33,7 @@ try:
     from .app_tunnel import local_http_reply, ws_open_worker, local_http_stream
 except ImportError:
     from ws_client import Websocket, WebsocketError
-    import agent as legacy
+    import runtime_core as runtime
     from app_registry import read_registry, reported_apps, load_app_secret
     from local_app_report import LocalReportServer
     from machine_identity import verify_machine_binding
@@ -50,6 +50,37 @@ DIAG_CMDS={
     'software':['powershell.exe','-NoProfile','-NonInteractive','-Command',
         'Get-Item "C:\\dsh\\DeepSeek Harness\\DeepSeek Harness.exe" -ErrorAction SilentlyContinue | Select-Object Name,LastWriteTime | Out-String'],
 }
+
+
+def enroll_if_needed(config_path: Path, cfg: dict) -> dict:
+    """Enroll exactly once using the pinned Guest Gateway CA and per-VM token.
+
+    Never replace an existing identity. The token is removed from the persisted
+    config immediately after a valid HTTPS enrollment response.
+    """
+    if cfg.get('agent_id') and cfg.get('agent_key'):
+        return cfg
+    token = cfg.get('enrollment_token')
+    vm_id = cfg.get('vm_id')
+    base = cfg.get('server_url', '')
+    ca = cfg.get('ca_bundle')
+    if not isinstance(vm_id, str) or not vm_id or not isinstance(token, str) or not token:
+        raise ValueError('V2 enrollment config incomplete')
+    if not isinstance(base, str) or not base.startswith('https://') or not isinstance(ca, str) or not Path(ca).is_file():
+        raise ValueError('V2 enrollment CA or HTTPS gateway invalid')
+    ctx = ssl.create_default_context(cafile=ca)
+    reply = runtime.api(base, '/agent/enroll', 'POST',
+                        {'vm_id': vm_id, 'one_time_token': token}, ssl_context=ctx)
+    if (not isinstance(reply, dict) or reply.get('vm_id') != vm_id or
+            not isinstance(reply.get('agent_id'), str) or not reply['agent_id'] or
+            not isinstance(reply.get('agent_key'), str) or len(reply['agent_key']) < 30):
+        raise ValueError('V2 enrollment response invalid')
+    cfg = dict(cfg)
+    cfg['agent_id'] = reply['agent_id']
+    cfg['agent_key'] = reply['agent_key']
+    cfg.pop('enrollment_token', None)
+    runtime.atomic_json(config_path, cfg)
+    return cfg
 
 
 def safe_path_fragment(path):
@@ -258,27 +289,25 @@ def run_live(config_path:Path,stop:threading.Event=None):
     def remember(reply):
         with results_lock:
             pending_results[reply['id']]=reply
-            legacy.atomic_json(results_path,pending_results)
+            runtime.atomic_json(results_path,pending_results)
     def acknowledge(op_id):
         with results_lock:
             if op_id in pending_results:
                 pending_results.pop(op_id)
-                legacy.atomic_json(results_path,pending_results)
+                runtime.atomic_json(results_path,pending_results)
     while not stop.is_set():
         ws=None
         phase='enrollment'
         try:
             if not config_path.is_file():
-                legacy.bootstrap_from_iso(config_path)
+                runtime.bootstrap_from_iso(config_path)
             if not config_path.is_file():
                 raise ValueError('Awaiting unique enrollment configuration')
             phase='load_config'
             cfg=json.loads(config_path.read_text(encoding='utf-8-sig'))
             phase='enrollment'
             if not cfg.get('agent_key'):
-                if not legacy.agent_loop(config_path,once=True):
-                    raise ValueError('Initial enrollment pending')
-                cfg=json.loads(config_path.read_text(encoding='utf-8-sig'))
+                cfg = enroll_if_needed(config_path, cfg)
             phase='validate_config'
             base=cfg['server_url']
             if not base.startswith('https://'):raise ValueError('HTTPS required')
@@ -319,14 +348,14 @@ def run_live(config_path:Path,stop:threading.Event=None):
                         reply={'type':'operation.result','id':op_id,'ok':good,'result':result}
                     else:
                         mode=task.get('kind')
-                        if mode=='ROLLBACK':result=legacy.perform_rollback(task,cfg_local)
+                        if mode=='ROLLBACK':result=runtime.perform_rollback(task,cfg_local)
                         else:
                             def report_phase(phase):
                                 try:app_outbox.put_nowait({'type':'software.progress','id':op_id,'phase':phase})
                                 except queue.Full:pass
                             report_phase('starting')
-                            result=legacy.perform_update(task,cfg_local,root,ssl.create_default_context(cafile=cfg_local.get('ca_bundle')),on_phase=report_phase)
-                        legacy.atomic_json(config_path,cfg_local)
+                            result=runtime.perform_update(task,cfg_local,root,ssl.create_default_context(cafile=cfg_local.get('ca_bundle')),on_phase=report_phase)
+                        runtime.atomic_json(config_path,cfg_local)
                         reply={'type':'software.result','id':op_id,'ok':True,'message':json.dumps(result,ensure_ascii=False)[:800]}
                 except Exception as e:
                     # Don't forward raw exception strings that may contain secrets, paths or tokens.
@@ -336,7 +365,7 @@ def run_live(config_path:Path,stop:threading.Event=None):
                                'COMMAND_REQUEST_NOT_AUTHORIZED' if str(e)=='COMMAND_REQUEST_NOT_AUTHORIZED' else \
                                'WINDOWS_ACCESS_DENIED' if isinstance(e,PermissionError) else type(e).__name__
                         reply={'type':'operation.result','id':op_id,'ok':False,'result':{'error':code}}
-                    else:reply={'type':'software.result','id':op_id,'ok':False,'message':legacy.safe_update_failure(e)}
+                    else:reply={'type':'software.result','id':op_id,'ok':False,'message':runtime.safe_update_failure(e)}
                 remember(reply)
                 with active_lock:
                     if active['id']==op_id:
@@ -346,7 +375,7 @@ def run_live(config_path:Path,stop:threading.Event=None):
             while not stop.is_set():
                 tick=time.monotonic()
                 if tick-last_hb>=30:
-                    report=legacy.snapshot_versions(cfg)
+                    report=runtime.snapshot_versions(cfg)
                     report['guest_agent']=AGENT_VERSION
                     report['smbios_uuid']=machine_uuid
                     report['transport']='wss'
@@ -505,11 +534,11 @@ def run_live(config_path:Path,stop:threading.Event=None):
                     fallback_cfg=json.loads(config_path.read_text(encoding='utf-8-sig'))
                     if fallback_cfg.get('agent_id') and fallback_cfg.get('agent_key'):
                         fallback_ctx=ssl.create_default_context(cafile=fallback_cfg.get('ca_bundle'))
-                        fallback_report=legacy.snapshot_versions(fallback_cfg)
+                        fallback_report=runtime.snapshot_versions(fallback_cfg)
                         fallback_report['guest_agent']=AGENT_VERSION
                         fallback_report['transport']='https-fallback'
                         fallback_report['remote_commands_allowed']=True
-                        legacy.api(fallback_cfg['server_url'],'/agent/heartbeat','POST',
+                        runtime.api(fallback_cfg['server_url'],'/agent/heartbeat','POST',
                             {'report':fallback_report},headers={
                                 'X-Agent-ID':fallback_cfg['agent_id'],
                                 'X-Agent-Key':fallback_cfg['agent_key']
@@ -530,7 +559,7 @@ def run_live(config_path:Path,stop:threading.Event=None):
 
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument('--config',default=str(Path(os.environ.get('PROGRAMDATA','C:/ProgramData'))/'VMO'/'agent.json'))
+    p.add_argument('--config',default=r'C:\Program Files\VM-Orchestrator\GuestAgent\state\agent.json')
     p.add_argument('--service',action='store_true')
     p.add_argument('--console',action='store_true')
     a=p.parse_args()

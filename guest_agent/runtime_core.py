@@ -1,4 +1,4 @@
-"""Windows Guest Agent: zero third-party Python packages, outbound HTTPS only.
+"""VMO Guest Agent V2 runtime utilities. No V1 scheduled task or polling loop.
 
 Does not run arbitrary host-provided commands. Software updates require locally
 approved install adapters, a host-approved immutable ZIP, and SHA-256 matching.
@@ -394,7 +394,7 @@ def snapshot_versions(config: dict):
             try: versions[product]=p.read_text(encoding='utf-8').strip()[:80]
             except OSError: pass
     return {'versions':versions,'hostname':os.environ.get('COMPUTERNAME') or os.environ.get('HOSTNAME','unknown'),
-            'guest_agent':'1.3.4','oobe':oobe_evidence(config),
+            'guest_agent':json.loads((Path(__file__).with_name('agent-release.json')).read_text(encoding='utf-8'))['version'],'oobe':oobe_evidence(config),
             'install_modes':{k:v.get('mode','disabled') for k,v in config.get('installations',{}).items()},
             'detected_software':detected_installations(config),
             **guest_ipv4_addresses(config.get('server_url',''))}
@@ -423,102 +423,3 @@ def bootstrap_from_iso(config_path: Path):
             return
         except (OSError,ValueError):
             continue
-
-
-def safe_failure_code(exc: Exception) -> str:
-    """Only a category is logged; never include token, URL or response body."""
-    if isinstance(exc, urllib.error.HTTPError):
-        return 'HTTP_' + str(exc.code)
-    if isinstance(exc, urllib.error.URLError):
-        return 'URLError_' + type(exc.reason).__name__
-    return type(exc).__name__
-
-
-def write_health(root: Path, ok: bool, problem: str | None):
-    path = root / 'sync-status.json'
-    old = {}
-    try:
-        old = json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        pass
-    now = datetime.now(timezone.utc).isoformat()
-    status = {'last_attempt_utc': now, 'last_success_utc': now if ok else old.get('last_success_utc'),
-              'sync_ok': ok, 'failure_code': problem}
-    atomic_json(path, status)
-
-
-def agent_loop(config_path: Path, once: bool = False):
-    root=config_path.parent
-    logs=root/'logs'
-    logs.mkdir(parents=True,exist_ok=True)
-    logger=logging.getLogger('vmo_guest')
-    logger.setLevel(logging.INFO)
-    log_path = (logs/'agent.log').resolve()
-    for old_handler in list(logger.handlers):
-        if (not isinstance(old_handler, RotatingFileHandler) or
-                Path(old_handler.baseFilename) != log_path or not log_path.exists()):
-            logger.removeHandler(old_handler)
-            old_handler.close()
-    if not logger.handlers:
-        handler=RotatingFileHandler(log_path,maxBytes=512*1024,backupCount=3,encoding='utf-8')
-        formatter=logging.Formatter('%(asctime)s +08:00 %(levelname)s %(message)s')
-        formatter.converter=lambda seconds:time.gmtime(seconds+8*3600)
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-    last_problem=None
-    successful=False
-    logger.info('Guest Agent started; running as scheduled SYSTEM task')
-    while True:
-        try:
-            bootstrap_from_iso(config_path)
-            cfg=json.loads(config_path.read_text(encoding='utf-8-sig'))
-            base=cfg['server_url'].rstrip('/')
-            # HTTPS is mandatory for credentials over virtual networks.
-            if not base.startswith('https://'):
-                raise RuntimeError('Guest Agent requires an HTTPS gateway')
-            ctx=ssl.create_default_context(cafile=cfg.get('ca_bundle') or None)
-            if not cfg.get('agent_key'):
-                token=cfg.get('enrollment_token','')
-                if not token: raise RuntimeError('Guest enrollment token not configured')
-                identity=api(base,'/agent/enroll','POST',{'vm_id':cfg['vm_id'],'one_time_token':token},ssl_context=ctx)
-                cfg.update(identity)
-                cfg.pop('enrollment_token',None)
-                atomic_json(config_path,cfg)
-            headers={'X-Agent-ID':cfg['agent_id'],'X-Agent-Key':cfg['agent_key']}
-            api(base,'/agent/heartbeat','POST',{'report':snapshot_versions(cfg)},headers=headers,ssl_context=ctx)
-            if not successful:
-                logger.info('Guest enrollment/heartbeat established for this VM')
-            successful=True
-            last_problem=None
-            task=api(base,'/agent/tasks/next',headers=headers,ssl_context=ctx).get('task')
-            if task:
-                try:
-                    result=(perform_rollback(task,cfg) if task.get('kind')=='ROLLBACK'
-                            else perform_update(task,cfg,root,ctx))
-                    atomic_json(config_path,cfg)
-                    ok=True; msg=json.dumps(result,ensure_ascii=False)[:800]
-                except Exception as exc:
-                    ok=False;msg=str(exc)[:800]
-                api(base,f"/agent/tasks/{task['id']}/result",'POST',{'succeeded':ok,'message':msg},headers=headers,ssl_context=ctx)
-            write_health(root, True, None)
-        except Exception as exc:
-            # Never log tokens, URLs containing credentials, headers, or arbitrary response bodies.
-            # Log the exception type only; diagnostics can use TCP tests separately.
-            problem=safe_failure_code(exc)
-            try: write_health(root, False, problem)
-            except OSError: pass
-            if problem != last_problem:
-                logger.warning('Guest sync pending/failed: %s',problem)
-                last_problem=problem
-            successful=False
-        if once: return successful and last_problem is None
-        time.sleep(30)
-
-
-if __name__=='__main__':
-    parser=argparse.ArgumentParser()
-    parser.add_argument('--config',required=True)
-    parser.add_argument('--once',action='store_true')
-    a=parser.parse_args()
-    ok=agent_loop(Path(a.config),a.once)
-    if a.once and not ok: raise SystemExit(1)

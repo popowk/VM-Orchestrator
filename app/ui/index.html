@@ -2,22 +2,22 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.45"></script>
+<script src="/ui/app-route-recover.js?v=1.4.46"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.45">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.46">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.45" defer></script>
+<script src="/ui/admin.js?v=1.4.46" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
   <aside class="sidebar">
-    <div class="brand"><div class="brand-icon">V</div><div><b>VM Orchestrator</b><small>Workstation Pro · Host Agent</small></div></div>
+    <div class="brand"><div class="brand-icon">V</div><div><b>VM Orchestrator</b></div></div>
     <nav aria-label="主导航">
       <button class="nav-item active" data-page="overview">▦ <span>概览</span></button>
       <button class="nav-item" data-page="vms">▤ <span>虚拟机</span></button>
@@ -28,12 +28,12 @@
       <button class="nav-item" data-page="clients">♙ <span>思博客户服务</span></button>
       <button class="nav-item" data-page="system">↻ <span>系统更新</span></button>
     </nav>
-    <div class="sidebar-foot"><span class="dot" id="hostDot"></span> <span id="hostLabel">连接中</span><small>管理网络 · 需授权</small></div>
+    <div class="sidebar-foot"><span class="dot" id="hostDot"></span> <span id="hostLabel">连接中</span></div>
   </aside>
   <main class="main">
     <header class="topbar">
-      <div><div class="crumb">VMWARE / <span id="pageCrumb">概览</span></div><h1 id="pageTitle">管理概览</h1></div>
-      <div class="top-actions"><span class="sync" id="syncStatus">尚未同步</span><button class="btn ghost" id="accountSettingsBtn" type="button">账号与 API 密钥</button><button class="btn ghost" id="refreshBtn">↻ 刷新</button><button class="btn ghost" id="logoutBtn">退出</button></div>
+      <div><h1 id="pageTitle">管理概览</h1></div>
+      <div class="top-actions"><button class="btn ghost" id="accountSettingsBtn" type="button">账号与 API 密钥</button><button class="btn ghost" id="refreshBtn">↻ 刷新</button><button class="btn ghost" id="logoutBtn">退出</button></div>
     </header>
     <section class="page" id="page-system">
       <div class="system-update-hero">
@@ -198,7 +198,7 @@
     </section>
     <section class="page" id="page-clients">
       <header class="biz-hero">
-        <div class="biz-hero-heading"><span class="biz-eyebrow">SIBHOSTING · CUSTOMER OPERATIONS</span><h2>客户服务工作台</h2><p>管理客户实例、商品授权、自助操作及服务规则。配置更集中，开通与续费流程保持不变。</p></div>
+        <div class="biz-hero-heading"><h2>客户服务工作台</h2><p>管理客户实例、商品授权、自助操作及服务规则。配置更集中，开通与续费流程保持不变。</p></div>
         <button type="button" class="btn ghost biz-hero-refresh" id="bizRefreshTop">↻ 更新数据</button>
       </header>
       <div class="biz-metrics" aria-label="思博服务概览">
@@ -330,7 +330,7 @@
       </div>
     </section>
     <section class="page" id="page-jobs"><section class="panel"><div class="panel-head"><div><h2>任务执行记录</h2><p>任务失败保留原因；自动刷新保留分页和所选项目</p></div><button class="btn ghost small" id="refreshJobs">刷新记录</button></div><div id="allJobs" class="table-wrap"></div><div id="jobsPager" class="pager"></div></section></section>
-    <footer class="main-footer">VM Orchestrator V1.4.38 · 双端口单进程 · 思博客户服务</footer>
+    
   </main>
 </div>
 <dialog id="accountDialog" class="dialog"><div class="dialog-head"><div><h2>管理员账户与 API 密钥</h2><p>修改密码会注销所有管理会话；API 密钥仅创建时显示一次，可随时撤销。</p></div><button class="icon-btn" type="button" id="accountClose">×</button></div>
@@ -338,7 +338,7 @@
   <hr><h3>可撤销 API 密钥</h3><form id="apiKeyCreateForm" class="form-grid"><label>密钥名称<input id="apiKeyName" required placeholder="思博 API / 自动化系统"></label><label>权限范围<select id="apiKeyScope"><option value="business">业务 API（开通/续费）</option><option value="admin">管理员 API（高权限）</option></select></label><div class="form-submit"><button class="btn primary" type="submit">生成 API 密钥</button></div></form>
   <div id="apiKeyNewSecret" hidden><p class="warning">请立即复制：关闭后无法再次查看完整密钥。</p><textarea id="apiKeySecret" rows="2" readonly style="width:100%"></textarea><button id="apiKeyCopyBtn" type="button" class="btn ghost">复制</button></div><div id="apiKeysList" class="template-list"></div>
 </dialog>
-<div class="login-screen" id="loginScreen" hidden><form class="login-box" id="loginForm"><div class="brand-icon big">V</div><h2>连接 VM 管理后台</h2><p>使用管理员账号密码登录。浏览器仅保存 HttpOnly 会话 Cookie，不保存明文密钥。</p><label>登录密码<input id="loginKey" type="password" autocomplete="off" required placeholder="管理员密码"></label><button class="btn primary full" type="submit">进入控制台</button><div id="loginError" class="error-text" role="alert"></div><small>仅授权管理员访问；跨设备使用请通过受信任的 HTTPS 入口</small></form></div>
+<div class="login-screen" id="loginScreen" hidden><form class="login-box" id="loginForm"><div class="brand-icon big">V</div><h2>连接 VM 管理后台</h2><label>密码<input id="loginKey" type="password" autocomplete="current-password" required placeholder="密码"></label><button class="btn primary full" type="submit">进入控制台</button><div id="loginError" class="error-text" role="alert"></div></form></div>
 <dialog id="vmDialog" class="dialog"><div class="dialog-head"><div><h2 id="dialogTitle">虚拟机</h2><p id="dialogSub"></p></div><button class="icon-btn" id="dialogClose" aria-label="关闭">×</button></div><div id="dialogBody"></div></dialog>
 <dialog id="testDialog" class="dialog"><div class="dialog-head"><div><h2>一键自动验收</h2><p id="testVmName"></p></div><button class="icon-btn" id="testClose" aria-label="关闭">×</button></div>
  <form id="testForm" class="test-form"><p class="warning">仅限已关机、可丢弃的测试虚拟机。会操作真实 VMware 快照；建议先备份重要数据。</p>

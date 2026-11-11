@@ -1,7 +1,6 @@
-# VMO Guest Agent V2: durable WSS results and safe protected-state upgrade.
-# Run elevated in the Guest only. Existing enrollment credentials are migrated,
-# NEVER regenerated. Legacy V1 scheduled task is REMOVED after V2 starts.
-param([string]$PythonExe, [switch]$TemplateMode)
+﻿# VMO Guest Agent V2: durable WSS results and safe protected-state upgrade.
+# Run elevated in the Guest only. Existing V2 identity is preserved.
+param([string]$PythonExe, [switch]$TemplateMode, [string]$ConfigFile)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $admin = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -9,10 +8,9 @@ if (-not $admin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 $program = 'C:\Program Files\VM-Orchestrator\GuestAgent'
 $state = Join-Path $program 'state'
-$legacy = Join-Path $env:ProgramData 'VMO'
 $config = Join-Path $state 'agent.json'
 $serviceName = 'VMO-GuestAgentV2'
-$files = @('agent-release.json','agent.py','agent_v2.py','interactive_session.py','upload_directory.py','app_tunnel.py','ws_client.py','app_registry.py','local_app_report.py','update_lifecycle.py','dsh_updates.py','quick_updates.py','quick_plugin_update.py','update_commands.py','user_update_exec.py','Configure-ManagedUpdates.ps1','windows_service.py','machine_identity.py','Probe-Gateway.py','Report-App-Startup.ps1','Report-App.cmd','Report-App-JSON.py','Set-RemotePermissions.ps1','Enable-RemoteCommands.cmd','Disable-RemoteCommands.cmd')
+$files = @('agent-release.json','runtime_core.py','agent_v2.py','interactive_session.py','upload_directory.py','app_tunnel.py','ws_client.py','app_registry.py','local_app_report.py','update_lifecycle.py','dsh_updates.py','quick_updates.py','quick_plugin_update.py','update_commands.py','user_update_exec.py','Configure-ManagedUpdates.ps1','windows_service.py','machine_identity.py','Probe-Gateway.py','Report-App-Startup.ps1','Report-App.cmd','Report-App-JSON.py','Set-RemotePermissions.ps1','Enable-RemoteCommands.cmd','Disable-RemoteCommands.cmd')
 
 function Assert-ExitCode([string]$Operation) {
     if ($LASTEXITCODE -ne 0) { throw "$Operation failed (exit $LASTEXITCODE)" }
@@ -36,8 +34,6 @@ function Secure-StateDir {
 }
 function Pick-Python {
     if ($PythonExe) { return $PythonExe }
-    $task = Get-ScheduledTask -TaskName 'VMO-GuestAgent' -ErrorAction SilentlyContinue
-    if ($task -and $task.Actions) { return [string]$task.Actions[0].Execute }
     $svc = Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction SilentlyContinue
     if ($svc -and $svc.PathName -match '^"([^\"]+python(?:w)?\.exe)"') { return $Matches[1] }
     foreach ($p in @('C:\Program Files\Python314\python.exe','C:\Program Files\Python313\python.exe','C:\Program Files\Python312\python.exe','C:\Program Files\Python311\python.exe')) {
@@ -92,40 +88,45 @@ foreach ($file in $files) {
     }
 }
 
-# Migrate from legacy ProgramData ONCE and never overwrite an existing V2 identity.
+# V2-only enrollment. Existing credentials are never overwritten.
+if ($TemplateMode -and $ConfigFile) { throw 'Golden template cannot contain a per-VM enrollment token.' }
 if ($TemplateMode) {
-    if ((Test-Path -LiteralPath $config -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $legacy 'agent.json') -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $state 'machine-binding.json') -PathType Leaf)) {
-        throw 'Golden template contains a client identity. Remove it only after safely reviewing this BUILD VM.'
+    if (Test-Path -LiteralPath $config -PathType Leaf) {
+        throw 'Golden template contains enrolled identity; refusing to seal it.'
+    }
+} elseif ($ConfigFile) {
+    if (-not (Test-Path -LiteralPath $ConfigFile -PathType Leaf)) { throw 'Per-VM config not found.' }
+    $incoming = Get-Content -LiteralPath $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $incoming.vm_id -or -not $incoming.server_url -or
+        -not $incoming.server_url.StartsWith('https://') -or -not $incoming.enrollment_token) {
+        throw 'Per-VM config must contain vm_id, HTTPS server_url and token.'
+    }
+    $sourceCa = Join-Path (Split-Path -Parent $ConfigFile) 'host-only-ca.pem'
+    if (-not (Test-Path -LiteralPath $sourceCa -PathType Leaf)) { throw 'Trusted Guest Gateway CA missing.' }
+    if (Test-Path -LiteralPath $config -PathType Leaf) {
+        $installed = Get-Content -LiteralPath $config -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($installed.vm_id -ne $incoming.vm_id) { throw 'Existing V2 belongs to another VM.' }
+        # A valid previously enrolled identity takes precedence over fresh tokens.
+    } else {
+        $caTarget = Join-Path $state 'host-only-ca.pem'
+        Copy-Item -LiteralPath $sourceCa -Destination $caTarget -Force
+        $incoming.ca_bundle = $caTarget
+        $temp = Join-Path $state ('enroll-' + [guid]::NewGuid().ToString('N') + '.tmp')
+        [IO.File]::WriteAllText($temp,($incoming | ConvertTo-Json -Depth 35), (New-Object Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $temp -Destination $config -Force
     }
 } elseif (-not (Test-Path -LiteralPath $config -PathType Leaf)) {
-    $oldConfig = Join-Path $legacy 'agent.json'
-    if (-not (Test-Path -LiteralPath $oldConfig -PathType Leaf)) {
-        throw 'No enrolled agent.json exists in the old or new location. Use the per-VM enrollment installer first.'
-    }
-    Copy-Item -LiteralPath $oldConfig -Destination $config -Force -ErrorAction Stop
-    foreach ($item in @('host-only-ca.pem','app-registry.json','sync-status.json','pending-results.json')) {
-        $p = Join-Path $legacy $item
-        if (Test-Path -LiteralPath $p -PathType Leaf) { Copy-Item -LiteralPath $p -Destination (Join-Path $state $item) -Force }
-    }
-    if (Test-Path -LiteralPath (Join-Path $legacy 'logs') -PathType Container) {
-        Copy-Item -LiteralPath (Join-Path $legacy 'logs') -Destination $state -Recurse -Force
-    }
+    throw 'V2 is not enrolled: provide a per-VM -ConfigFile or use -TemplateMode.'
 }
-# Existing V2 state may still reference the legacy CA path; copy the CA if needed.
 $caTarget = Join-Path $state 'host-only-ca.pem'
-$oldCA = Join-Path $legacy 'host-only-ca.pem'
-if (-not (Test-Path -LiteralPath $caTarget) -and (Test-Path -LiteralPath $oldCA -PathType Leaf)) {
-    Copy-Item -LiteralPath $oldCA -Destination $caTarget -Force
-}
 if (Test-Path -LiteralPath $config -PathType Leaf) {
     $cfg = Get-Content -LiteralPath $config -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not $cfg.vm_id -or -not $cfg.agent_id -or -not $cfg.agent_key -or -not $cfg.server_url -or -not $cfg.server_url.StartsWith('https://')) {
-        throw 'Guest identity is not fully enrolled or HTTPS URL is invalid.'
-    }
-    $fromLegacy = Join-Path $legacy 'agent.json'
-    if (Test-Path -LiteralPath $fromLegacy -PathType Leaf) {
-        $old = Get-Content -LiteralPath $fromLegacy -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($old.vm_id -and $old.vm_id -ne $cfg.vm_id) { throw 'Refusing to mix credentials from two different VMs.' }
+    $enrolled = [bool]($cfg.PSObject.Properties['agent_id'] -and $cfg.PSObject.Properties['agent_key'] -and
+        $cfg.agent_id -and $cfg.agent_key)
+    $pending = [bool]($cfg.PSObject.Properties['enrollment_token'] -and $cfg.enrollment_token)
+    if (-not $cfg.vm_id -or -not $cfg.server_url -or -not $cfg.server_url.StartsWith('https://') -or
+        -not ($enrolled -or $pending)) {
+        throw 'V2 enrollment identity/token or HTTPS URL is invalid.'
     }
     if (-not (Test-Path -LiteralPath $caTarget -PathType Leaf)) { throw 'Trusted CA missing; refusing to change the service.' }
     # Force the CA to the new protected location. Never change the CA itself.
@@ -192,19 +193,7 @@ try {
     Start-Sleep -Seconds 2
     if ((Get-Service $serviceName).Status -ne 'Running') { throw 'Guest Agent service did not remain Running.' }
 
-    # Only now remove the legacy task. A failure to remove it must NOT roll back a running V2.
-    $v1 = Get-ScheduledTask -TaskName 'VMO-GuestAgent' -ErrorAction SilentlyContinue
-    if ($v1) {
-        try {
-            Unregister-ScheduledTask -TaskName 'VMO-GuestAgent' -Confirm:$false -ErrorAction Stop
-        } catch {
-            Write-Warning ('V2 is Running, but legacy V1 task could not be removed: ' + $_.Exception.Message)
-        }
-    }
     Write-Host 'SUCCESS: V2 automatic service is Running.' -ForegroundColor Green
-    if (-not (Get-ScheduledTask -TaskName 'VMO-GuestAgent' -ErrorAction SilentlyContinue)) {
-        Write-Host 'Legacy V1 task removed.' -ForegroundColor Green
-    }
     Write-Host ('Protected Guest identity: ' + $config) -ForegroundColor Cyan
     Write-Host ('Verified pre-upgrade backups: ' + $backup) -ForegroundColor Cyan
     Write-Host 'WSS connectivity is a separate check; run Check-V2.cmd.' -ForegroundColor Yellow

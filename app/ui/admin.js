@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.45 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.46 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -39,7 +39,7 @@ function setLogin(visible){
   $('loginScreen').hidden=!visible;
   if(visible){state.csrf='';VMOCloseEvents();$('loginError').textContent='';}
 } 
-function navigate(page){if(!pages[page])return;const previous=state.activePage;if(previous==='remote'&&page!=='remote')window.VMORemote?.stopPreview();state.activePage=page;if(page==='clients')window.VMOClients?.refresh();else if(page==='remote')window.VMORemote?.refresh();else if(page==='system')window.VMOSystemUpdate?.load();else refresh();document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));$('pageTitle').textContent=pages[page];$('pageCrumb').textContent=page==='overview'?'概览':pages[page];}
+function navigate(page){if(!pages[page])return;const previous=state.activePage;if(previous==='remote'&&page!=='remote')window.VMORemote?.stopPreview();state.activePage=page;if(page==='clients')window.VMOClients?.refresh();else if(page==='remote')window.VMORemote?.refresh();else if(page==='system')window.VMOSystemUpdate?.load();else refresh();document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));$('pageTitle').textContent=pages[page];}
 async function refresh(){if(state.busy || !state.csrf)return;state.busy=true; try{
   const [tpl,vms,jobs,caps,defaults,guests,packages,updatesPaged,reinstalls,jobsPaged] = await Promise.all([
     request('/api/templates'),request('/api/vms'),request('/api/jobs'),request('/api/host/capabilities'),
@@ -56,7 +56,7 @@ async function refresh(){if(state.busy || !state.csrf)return;state.busy=true; tr
   else if(state.activePage==='jobs')renderJobs();
   else if(state.activePage==='updates')renderFleet();
   else if(state.activePage==='clients')window.VMOClients?.refresh();
-  $('syncStatus').textContent='更新于 '+VMO_BJT(Date.now(),'time');$('hostDot').className='dot '+(caps.vmrun_responding?'ok':'bad');$('hostLabel').textContent=caps.vmrun_responding?'Host Agent 正常':'VMware 工具异常';
+  $('hostDot').className='dot '+(caps.vmrun_responding?'ok':'bad');$('hostLabel').textContent=caps.vmrun_responding?'服务正常':'VMware 工具异常';
   for(const id of Array.from(state.watched)){const j=state.jobs.find(x=>x.id===id);if(j && ['SUCCEEDED','FAILED'].includes(j.status)){state.watched.delete(id);toast(`${j.action}：${statusName[j.status]}${j.detail?' · '+j.detail:''}`,j.status==='FAILED');}}
  }catch(e){$('hostDot').className='dot bad';$('hostLabel').textContent='连接异常';toast(e.message,true);}finally{state.busy=false;}}
 function renderOverview(){
