@@ -67,6 +67,9 @@ class FleetStore:
             enrollment_columns={r[1] for r in d.execute('PRAGMA table_info(guest_enrollment)')}
             if 'smbios_uuid' not in enrollment_columns:
                 d.execute('ALTER TABLE guest_enrollment ADD COLUMN smbios_uuid TEXT')
+            reinstall_columns={r[1] for r in d.execute('PRAGMA table_info(vm_reinstalls)')}
+            if 'backup_deleted_at' not in reinstall_columns:
+                d.execute('ALTER TABLE vm_reinstalls ADD COLUMN backup_deleted_at TEXT')
             package_columns={r[1] for r in d.execute('PRAGMA table_info(update_packages)')}
             if 'deleted_at' not in package_columns:
                 d.execute('ALTER TABLE update_packages ADD COLUMN deleted_at TEXT')
@@ -384,11 +387,22 @@ class FleetStore:
     def reinstall_record(self, job_id: str, vm_id: str, old_id: str, new_id: str, status: str, backup: str = ''):
         with self.db() as d:
             if status=='QUEUED':
-                d.execute('INSERT INTO vm_reinstalls VALUES(?,?,?,?,?,?,?,NULL)',
+                d.execute('INSERT INTO vm_reinstalls '
+                          '(job_id,vm_id,old_template_id,new_template_id,backup_path,status,created_at,completed_at) '
+                          'VALUES(?,?,?,?,?,?,?,NULL)',
                           (job_id,vm_id,old_id,new_id,backup,status,now()))
             else:
                 d.execute('UPDATE vm_reinstalls SET status=?,backup_path=?,completed_at=? WHERE job_id=?',
                           (status,backup,now(),job_id))
+
+    def mark_reinstall_backup_deleted(self, job_id: str, backup_path: str) -> None:
+        """Retain the reinstall audit row; mark its old backup permanently removed."""
+        with self.db() as d:
+            cur=d.execute("UPDATE vm_reinstalls SET backup_deleted_at=? "
+                          "WHERE job_id=? AND backup_path=? AND status='SUCCEEDED' "
+                          "AND backup_deleted_at IS NULL", (now(),job_id,backup_path))
+            if cur.rowcount != 1:
+                raise FleetError('Reinstall backup changed during cleanup; inspect history')
 
     def reinstalls(self, vm_id: str | None = None):
         with self.db() as d:

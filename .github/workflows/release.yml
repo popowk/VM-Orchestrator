@@ -126,6 +126,30 @@ jobs:
           try { Get-VerifiedVMOPid '1.4.47' 0 | Out-Null } catch { $failed=$true }
           if (-not $failed) { throw 'Non-VMO Python entrypoint must be rejected' }
           Write-Host 'PASS: zero PID and empty WMI CommandLine handled safely'
+      - name: Regression - cleanup preview and delete guards
+        run: python -m unittest discover -s tests -p test_cleanup.py -v
+      - name: Confirm launcher does not pause
+        shell: bash
+        run: |
+          if grep -iq '^[[:space:]]*pause[[:space:]]*
+        run: python tools/build_release.py
+      - name: Publish only a new release version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(tr -d '\r\n' < VERSION)
+          if gh release view "v${v}" >/dev/null 2>&1; then
+            echo "Release v${v} already exists; keeping published artifacts unchanged."
+            exit 0
+          fi
+          gh release create "v${v}" "dist/VM-Orchestrator-v${v}.zip" "dist/VM-Orchestrator-v${v}.zip.sha256" \
+            --target "$GITHUB_SHA" --title "VM Orchestrator v${v}" --generate-notes
+ Start-VM-Orchestrator.cmd; then
+            echo "The launcher must close when the Host stops" >&2
+            exit 1
+          fi
       - name: Build release ZIP and SHA-256
         run: python tools/build_release.py
       - name: Publish only a new release version

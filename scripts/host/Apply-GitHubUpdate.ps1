@@ -122,11 +122,46 @@ function Probe-Version([string]$needed,[int]$attempts=30) {
     return $false
 }
 function Launch-Host {
-    $file = Join-Path $Target 'Start-VM-Orchestrator.cmd'
+    # No new CMD window. Run under the logged-in VMware account.
+    $file = Join-Path $Target 'scripts\host\Start-Unified.ps1'
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
         throw 'Missing unified backend launcher'
     }
-    Start-Process -FilePath $file -WorkingDirectory $Target
+    $args = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' +
+            $file + '" -NoBrowser'
+    $out = Join-Path $stateDir 'host-launch-out.log'
+    $err = Join-Path $stateDir 'host-launch-error.log'
+    Start-Process -FilePath 'powershell.exe' -ArgumentList $args -WorkingDirectory $Target -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
+}
+function Get-LegacyVMOCmdId([int]$vmoPid) {
+    if ($vmoPid -le 0) { return 0 }
+    try {
+        $py=Get-CimInstance Win32_Process -Filter ("ProcessId=" + $vmoPid) -ErrorAction Stop
+        if (-not $py -or $py.Name -notmatch '^python(w)?\.exe$' -or $py.ParentProcessId -le 0) { return 0 }
+        $parent=Get-CimInstance Win32_Process -Filter ("ProcessId=" + $py.ParentProcessId) -ErrorAction Stop
+        if (-not $parent -or $parent.Name -notmatch '^(powershell|pwsh)\.exe$') { return 0 }
+        $grand=Get-CimInstance Win32_Process -Filter ("ProcessId=" + $parent.ParentProcessId) -ErrorAction Stop
+        if (-not $grand -or $grand.Name -ne 'cmd.exe') { return 0 }
+        $p=Get-Process -Id $grand.ProcessId -ErrorAction Stop
+        if ($grand.CommandLine -match 'Start-VM-Orchestrator\.cmd' -or
+            $p.MainWindowTitle -eq 'VM Orchestrator - Unified Backend') {
+            return [int]$grand.ProcessId
+        }
+    } catch { }
+    return 0
+}
+function Close-LegacyVMOCmd([int]$cmdId) {
+    if ($cmdId -le 0) { return }
+    try {
+        $proc=Get-Process -Id $cmdId -ErrorAction Stop
+        $meta=Get-CimInstance Win32_Process -Filter ("ProcessId=" + $cmdId) -ErrorAction Stop
+        if ($meta.Name -eq 'cmd.exe' -and
+            ($meta.CommandLine -match 'Start-VM-Orchestrator\.cmd' -or
+             $proc.MainWindowTitle -eq 'VM Orchestrator - Unified Backend')) {
+            Stop-Process -Id $cmdId -Force -ErrorAction Stop
+            Log ('Closed verified legacy VMO CMD PID ' + $cmdId)
+        }
+    } catch { Log ('Legacy CMD closure skipped: ' + $_.Exception.Message) }
 }
 function Replace-Code([string]$from) {
     foreach ($folder in $folders) {
@@ -196,9 +231,11 @@ try {
     $oldId=Get-VerifiedVMOPid $beforeVersion $HostPid
     if ($oldId -gt 0) {
         $HostPid=$oldId
+        $oldCmdId=Get-LegacyVMOCmdId $HostPid
         Log ('Verified old Host PID ' + $HostPid)
         Stop-Process -Id $HostPid -Force -ErrorAction Stop
         $stoppedOld=$true
+        Close-LegacyVMOCmd $oldCmdId
     } else {
         Log 'HostPid=0: no listener, safely skipping process termination'
     }

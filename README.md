@@ -1,4 +1,4 @@
-# VM Orchestrator — 功能总览（v1.4.48）
+# VM Orchestrator — 功能总览（v1.4.49）
 
 VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机运营管理系统。正式发布包仅包含运行程序与必要安装/运维脚本；此文件为唯一的产品说明。
 
@@ -44,7 +44,7 @@ VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机
 - 目前发布包的语法、HTTP 和模拟场景可测试，但实际 VMware Workstation、思博环境、Windows 服务重启与回滚仍需在目标机器验收。
 
 
-### Windows updater reliability (v1.4.48)
+### Windows updater reliability (v1.4.49)
 
 On Windows, the Host validates the copied updater using the local PowerShell
 parser, writes it as UTF-8 with BOM, then launches it with Unicode-safe
@@ -69,7 +69,7 @@ If those versions disagree, inspect the installed directory and process
 startup method before retrying. Static UI-only updates remain restart-free.
 
 
-### Windows updater PID=0 recovery (v1.4.48)
+### Windows updater PID=0 recovery (v1.4.49)
 
 When manual recovery starts with no Host listener, the detached updater no
 longer queries Windows ProcessId=0 (System Idle). If VMO is still running or
@@ -78,3 +78,25 @@ the Python process name, /health PID/capability/version and the local VERSION
 file. A redacted WMI CommandLine is accepted only if all positive checks pass.
 Any ambiguous service or mismatched version blocks replacement. Failed
 upgrades only restore code after checking that both ports are free.
+
+## Disk cleanup and safe Host launch (v1.4.49)
+
+Authenticated administrators can preview and delete *only* recognized VMO
+update staging directories (older than 7 days), obsolete updater logs (older
+than 30 days), and old code rollback directories (older than 30 days, always
+retaining the two newest). Old program rollback directories are opt-in.
+
+Completed reinstall backups are a **separate manual-only** category. A backup
+must be identified by a SUCCEEDED vm_reinstalls DB row, be a direct child of
+Customers/.vmo-reinstall-backups with the expected name, have an intact current
+replacement VM, and pass VMware power, lock, reparse, and linked disk guards.
+The irreversible delete action requires a fresh fingerprint and typed approval.
+On success the backup_deleted_at timestamp is added without deleting reinstall
+history. Failed or ambiguous backups are never automatically deleted. Running
+VMs, golden templates, databases, credentials, and approved update packages are
+outside the cleanup allowlist.
+
+Host updates now launch a hidden PowerShell Host instead of a new CMD console.
+The manual CMD launcher no longer pauses after an error, and a previously
+verified legacy launcher may be closed individually. Other cmd.exe processes
+are never targeted.
