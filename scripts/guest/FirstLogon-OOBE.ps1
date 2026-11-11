@@ -1,4 +1,4 @@
-# Runs once at the desktop after unattended OOBE. No password in logs.
+﻿# Runs once at the desktop after unattended OOBE. No password in logs.
 # SetupComplete.cmd may be skipped on some Windows/OEM configurations,
 # so this first-login hook also supplies an independent completion marker.
 $ErrorActionPreference = 'Stop'

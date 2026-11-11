@@ -1,4 +1,4 @@
-# Optional Windows interactive auto-logon setup for GUI apps, NOT required for the Guest Agent.
+﻿# Optional Windows interactive auto-logon setup for GUI apps, NOT required for the Guest Agent.
 # Uses Microsoft's official Sysinternals Autologon interactive GUI.
 # It NEVER collects/stores the Windows password in this script or command line.
 param([string]$AutologonExe = '')

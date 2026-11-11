@@ -1,4 +1,4 @@
-# VM Orchestrator v1.4.39（非阻塞审核 + 系统自动更新 + 远程预览）
+# VM Orchestrator v1.4.40（非阻塞审核 + 系统自动更新 + 远程预览）
 
 本项目用于 Windows + VMware Workstation Pro 宿主机，集成思博客户业务、独立 Guest Agent、客户门户与远程运维。
 
@@ -28,7 +28,7 @@ VM-Orchestrator-v1.4.39/
 2. 从 ZIP 解压到不同于正式安装路径的文件夹，运行 `Install-All.cmd`。安装器备份历史文件，**不会删除已有数据库/DPAPI 密钥/客户虚拟机**。
 3. 用 VMware Workstation 所属的 Windows 登录用户运行 `Start-VM-Orchestrator.cmd`，管理端默认 `http://127.0.0.1:8765`。
 4. 首次初始化管理员账户执行 `Manage.cmd account`；其他维护项目直接双击 `Manage.cmd` 查看菜单。
-5. 管理页面无法切换时，用 Ctrl+Shift+R 强制刷新，检查 `/ui/admin.js?v=1.4.39` 返回 HTTP 200（需要登录）。
+5. 管理页面无法切换时，用 Ctrl+Shift+R 强制刷新，检查 `/ui/admin.js?v=1.4.40` 返回 HTTP 200（需要登录）。
 
 ## 已修复的页面无法点击问题
 
@@ -90,3 +90,7 @@ VM-Orchestrator-v1.4.39/
 - 运行时数据、密钥、证书及虚拟机文件均不纳入 Release。
 - 公开源码不包含客户数据库/令牌/真实证书；如有真实部署凭据请仅在宿主机设置。
 - 生产使用前在 Windows/VMware 宿主机测试升级及回滚。
+
+## v1.4.40: Guest Agent 自动更新与 WSS 分类日志
+
+请参阅 `docs/v1.4.40-agent-updates.md`。Host 会在 Agent 成功建立 WSS 并上报版本后自动为旧版生成专属升级包，受任务排队、SHA-256 校验和重试间隔限制。默认开启，设置 `VMO_GUEST_AGENT_AUTO_UPDATE=0` 关闭。无须每台 Guest 另装更新守护进程。

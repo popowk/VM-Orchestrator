@@ -163,7 +163,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     vmrun = vmrun or Vmrun(settings.vmrun_path)
     secret_root = settings.db_path.parent / 'provision-secrets'
     runner = JobRunner(store, vmrun, secret_root, settings.admin_key)
-    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.39',
+    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.40',
                   description='Local management of sealed templates and VMware Workstation VMs.')
 
     # UI session is an HttpOnly, SameSite=Strict cookie signed using a key derived
@@ -416,7 +416,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
 
     @app.get('/health')
     def health():
-        return {'status': 'ok', 'phase': 10, 'version': '1.4.39', 'capability': 'per-clone-oobe-template-bootstrap'}
+        return {'status': 'ok', 'phase': 10, 'version': '1.4.40', 'capability': 'per-clone-oobe-template-bootstrap'}
 
     # App-level updates are NOT the per-Guest "software updates" facility.
     # These routes remain on the privileged Host listener only.
@@ -792,6 +792,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         info=agent_updates.latest(vm_id)
         running=(guest or {}).get('reported',{}).get('guest_agent')
         return {'installed_version':running,'bundled_version':agent_updates.version,
+                'auto_update_enabled':os.environ.get('VMO_GUEST_AGENT_AUTO_UPDATE','1').strip().lower() not in ('0','off','false','no'),
                 'wss':presence.get('state','never_connected'),'latest':info,
                 'verified':bool(info and running==info['version'] and info.get('status')!='FAILED')}
 

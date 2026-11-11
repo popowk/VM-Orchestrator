@@ -1,4 +1,4 @@
-# Runs from Windows SetupComplete, after Windows OOBE processing and before first login.
+﻿# Runs from Windows SetupComplete, after Windows OOBE processing and before first login.
 # Marker is not sufficient alone for delivery; Guest Agent also checks Windows ImageState/account.
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:ProgramData 'VMO-OOBE'

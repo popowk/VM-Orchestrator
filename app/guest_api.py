@@ -16,6 +16,7 @@ import re
 import html
 import json
 import secrets
+import logging
 from urllib.parse import urlsplit
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, Request, Response, Form
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
@@ -24,6 +25,7 @@ from .relay_limits import RelayStreamAdmission, RelayBusy
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from .fleet import FleetStore, FleetError
+from .agent_update import AgentUpdateManager, build_bootstrap, newer_release
 from .config import Settings
 
 class Enroll(BaseModel):
@@ -42,9 +44,55 @@ def create_guest_app(db_path: Path | None = None):
     settings = Settings.from_env()
     db_path = db_path or settings.db_path
     fleet = FleetStore(db_path)
-    app = FastAPI(title='VMO Guest Agent Gateway', version='1.4.37', docs_url=None, redoc_url=None)
+    app = FastAPI(title='VMO Guest Agent Gateway', version='1.4.40', docs_url=None, redoc_url=None)
     artifact_root = db_path.parent / 'approved_packages'
     remote = RemoteStore(db_path)
+    agent_updates = AgentUpdateManager(db_path, Path(__file__).resolve().parent.parent / 'guest_agent')
+    auto_agent_update = os.environ.get('VMO_GUEST_AGENT_AUTO_UPDATE', '1').strip().lower() not in ('0','off','false','no')
+    upgrade_logger = logging.getLogger('vmo.guest_agent_upgrade')
+
+    def maybe_auto_upgrade(vm_id: str, report: dict):
+        """Offer the bundled, authenticated, pinned Agent update to older V2 Guests.
+
+        The initial transition works with existing 2.0.21 Agents: they already
+        accept authorized WSS commands and have the verified rollback installer.
+        Only the Host reads GitHub Releases; Guest never runs public URLs.
+        """
+        if not auto_agent_update or not isinstance(report, dict):
+            return
+        running = report.get('guest_agent')
+        if not newer_release(running):
+            return
+        if not agent_updates.auto_retry_due(vm_id):
+            return
+        # Respect all queued/in-flight remote operations and software jobs.
+        # Do not stop the Agent while a customer's command is running.
+        with remote.db() as d:
+            remote_busy = d.execute('''SELECT 1 FROM remote_guest_ops
+                WHERE vm_id=? AND state IN ('QUEUED','CLAIMED','RUNNING') LIMIT 1''',
+                (vm_id,)).fetchone()
+            software_busy = d.execute('''SELECT 1 FROM guest_tasks
+                WHERE vm_id=? AND status IN ('QUEUED','CLAIMED','RUNNING') LIMIT 1''',
+                (vm_id,)).fetchone()
+        if remote_busy or software_busy:
+            return
+        package = None
+        try:
+            package = agent_updates.prepare(vm_id, source='auto')
+            command = build_bootstrap(package['id'], package['sha256'], package['version'])
+            op_id = remote.queue(vm_id,'COMMAND',{
+                'shell':'powershell','command':command,'privilege':'system',
+                'confirmed':True,'run_mode':'wait','timeout_seconds':120},ttl=420)
+            agent_updates.attach(package['id'],op_id)
+            upgrade_logger.info('Queued auto Guest Agent upgrade for VM %s: %s to %s',
+                                vm_id, running, package['version'])
+        except Exception as exc:
+            if package is not None:
+                agent_updates.discard(package['id'])
+            # No confidential URLs, credentials, or remote command text in logs.
+            upgrade_logger.warning('Auto Guest Agent upgrade scheduling failed: %s',
+                                   type(exc).__name__)
+
     # Per-process in-memory WSS fanout. Run one uvicorn worker, no reload.
     active = {}
     # Internal only: allows offline regression tests to simulate a Guest WSS link.
@@ -583,6 +631,12 @@ def create_guest_app(db_path: Path | None = None):
                         return
                     last_heartbeat=time.monotonic()
                     remote.link_heartbeat(vm,connection_id)
+                    # Auto-updates are optional maintenance: a packaging/database
+                    # error must NEVER kill the authenticated WSS connection.
+                    try:
+                        maybe_auto_upgrade(vm, report)
+                    except Exception as exc:
+                        upgrade_logger.warning('Auto Agent check deferred: %s',type(exc).__name__)
                     await send_event({'type':'heartbeat_ack'})
                 elif kind=='operation.started':
                     oid=event.get('id','')

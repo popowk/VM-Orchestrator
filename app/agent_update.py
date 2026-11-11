@@ -62,6 +62,16 @@ def build_archive(source: Path) -> bytes:
     return memory.getvalue()
 
 
+def newer_release(current_version: str, target_version: str = RELEASE) -> bool:
+    """Only upgrade known, comparable V2 releases; never downgrade or reinstall."""
+    pattern = r'^2\.[0-9]{1,5}\.[0-9]{1,5}$'
+    if not isinstance(current_version, str) or not re.fullmatch(pattern, current_version):
+        return False
+    if not re.fullmatch(pattern, target_version):
+        return False
+    return tuple(map(int, current_version.split('.'))) < tuple(map(int, target_version.split('.')))
+
+
 def build_bootstrap(identifier: str, expected_sha: str, target: str = RELEASE) -> str:
     if not HEX_ID.fullmatch(identifier) or not re.fullmatch('[0-9a-f]{64}', expected_sha) or target != RELEASE:
         raise ValueError('Invalid Agent update request')
@@ -114,7 +124,9 @@ class AgentUpdateManager:
             d.execute('''CREATE TABLE IF NOT EXISTS agent_upgrade_requests (
                  id TEXT PRIMARY KEY, vm_id TEXT NOT NULL, version TEXT NOT NULL,
                  sha256 TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
-                 operation_id TEXT)''')
+                 operation_id TEXT, source TEXT NOT NULL DEFAULT 'manual')''')
+            if 'source' not in {row[1] for row in d.execute('PRAGMA table_info(agent_upgrade_requests)')}:
+                d.execute("ALTER TABLE agent_upgrade_requests ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
             d.execute('CREATE INDEX IF NOT EXISTS agent_upgrade_by_vm ON agent_upgrade_requests(vm_id,created_at)')
 
     def _db(self):
@@ -122,7 +134,9 @@ class AgentUpdateManager:
         d.row_factory = sqlite3.Row
         return d
 
-    def prepare(self, vm_id: str) -> dict:
+    def prepare(self, vm_id: str, source: str = 'manual') -> dict:
+        if source not in ('manual', 'auto'):
+            raise ValueError('Unknown upgrade source')
         identifier = uuid.uuid4().hex
         package = build_archive(self.source)
         digest = hashlib.sha256(package).hexdigest()
@@ -131,12 +145,50 @@ class AgentUpdateManager:
         stamp = datetime.now(timezone.utc)
         try:
             with self._db() as d:
-                d.execute('INSERT INTO agent_upgrade_requests VALUES(?,?,?,?,?,?,NULL)',
-                          (identifier,vm_id,RELEASE,digest,stamp.isoformat(),(stamp+timedelta(hours=2)).isoformat()))
+                d.execute('''INSERT INTO agent_upgrade_requests
+                      (id,vm_id,version,sha256,created_at,expires_at,operation_id,source)
+                      VALUES(?,?,?,?,?,?,NULL,?)''',
+                          (identifier,vm_id,RELEASE,digest,stamp.isoformat(),
+                           (stamp+timedelta(hours=2)).isoformat(),source))
         except Exception:
             path.unlink(missing_ok=True)
             raise
         return {'id':identifier,'version':RELEASE,'sha256':digest,'bytes':len(package)}
+
+    def discard(self, identifier: str):
+        """Clean a not-yet-queued update if dispatch fails."""
+        with self._db() as d:
+            row = d.execute('SELECT operation_id FROM agent_upgrade_requests WHERE id=?',
+                            (identifier,)).fetchone()
+            if row and row['operation_id'] is None:
+                d.execute('DELETE FROM agent_upgrade_requests WHERE id=?', (identifier,))
+                try:
+                    (self.root / (identifier + '.zip')).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def auto_retry_due(self, vm_id: str) -> bool:
+        """No restart loops: minimum 90 minutes apart; maximum 3 auto tries/day.
+
+        Manual requests are also honored to avoid competing with a human repair.
+        """
+        now = datetime.now(timezone.utc)
+        with self._db() as d:
+            recent = d.execute('''SELECT created_at,source FROM agent_upgrade_requests
+                WHERE vm_id=? AND version=? ORDER BY created_at DESC LIMIT 1''',
+                (vm_id,RELEASE)).fetchone()
+            attempts = d.execute('''SELECT COUNT(*) FROM agent_upgrade_requests
+                WHERE vm_id=? AND version=? AND source='auto' AND created_at>=?''',
+                (vm_id,RELEASE,(now-timedelta(days=1)).isoformat())).fetchone()[0]
+        if attempts >= 3:
+            return False
+        if recent:
+            try:
+                if now-datetime.fromisoformat(recent['created_at']) < timedelta(minutes=90):
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
 
     def attach(self, identifier: str, operation_id: str):
         with self._db() as d:
@@ -162,7 +214,7 @@ class AgentUpdateManager:
                 FROM agent_upgrade_requests a LEFT JOIN remote_guest_ops o ON a.operation_id=o.id
                 WHERE a.vm_id=? ORDER BY a.created_at DESC LIMIT 1''',(vm_id,)).fetchone()
         if not row:return None
-        return {k:row[k] for k in ('id','version','created_at','operation_id','status')}
+        return {k:row[k] for k in ('id','version','created_at','operation_id','status','source')}
 
     def recent_pending(self, vm_id: str):
         latest=self.latest(vm_id)

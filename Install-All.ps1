@@ -1,4 +1,4 @@
-# VM Orchestrator V1.4.39 system Python + remote task recovery (Windows PowerShell 5.1 compatible)
+﻿# VM Orchestrator V1.4.39 system Python + remote task recovery (Windows PowerShell 5.1 compatible)
 # Keep database, TLS, DPAPI keys, VMs and templates. Ignore legacy .venv.
 param(
     [string]$Target = 'D:\VMware\VM-Orchestrator',

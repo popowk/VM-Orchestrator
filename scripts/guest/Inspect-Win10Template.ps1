@@ -1,4 +1,4 @@
-# Run INSIDE the disposable Windows 10 template BUILD CLONE, in PowerShell 5.1+.
+﻿# Run INSIDE the disposable Windows 10 template BUILD CLONE, in PowerShell 5.1+.
 # Produces filenames and categories ONLY: never reads or prints credential contents.
 param(
     [string]$DshHome = $(if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' }),

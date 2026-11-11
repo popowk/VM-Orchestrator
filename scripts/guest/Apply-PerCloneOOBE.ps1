@@ -1,4 +1,4 @@
-# Runs as SYSTEM in Windows setup specialize pass on the newly cloned VM.
+﻿# Runs as SYSTEM in Windows setup specialize pass on the newly cloned VM.
 # Never prints XML or customer passwords. Fail closed to interactive OOBE if media missing.
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:ProgramData 'VMO-OOBE'

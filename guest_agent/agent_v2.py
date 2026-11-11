@@ -266,18 +266,23 @@ def run_live(config_path:Path,stop:threading.Event=None):
                 legacy.atomic_json(results_path,pending_results)
     while not stop.is_set():
         ws=None
+        phase='enrollment'
         try:
             if not config_path.is_file():
                 legacy.bootstrap_from_iso(config_path)
             if not config_path.is_file():
                 raise ValueError('Awaiting unique enrollment configuration')
+            phase='load_config'
             cfg=json.loads(config_path.read_text(encoding='utf-8-sig'))
+            phase='enrollment'
             if not cfg.get('agent_key'):
                 if not legacy.agent_loop(config_path,once=True):
                     raise ValueError('Initial enrollment pending')
                 cfg=json.loads(config_path.read_text(encoding='utf-8-sig'))
+            phase='validate_config'
             base=cfg['server_url']
             if not base.startswith('https://'):raise ValueError('HTTPS required')
+            phase='wss_handshake'
             ws=Websocket(base.replace('https://','wss://',1).rstrip('/')+'/agent/ws',
                          {'X-Agent-ID':cfg['agent_id'],'X-Agent-Key':cfg['agent_key']},cfg.get('ca_bundle'))
             # Server proves the Agent's authorized vm_id before this installation
@@ -288,6 +293,7 @@ def run_live(config_path:Path,stop:threading.Event=None):
                 if welcome is not None: break
             if not isinstance(welcome, dict) or welcome.get('type') != 'connected' or welcome.get('vm_id') != cfg['vm_id']:
                 raise WebsocketError('Guest gateway identity handshake failed')
+            phase='machine_identity'
             try:
                 machine_uuid = verify_machine_binding(root, cfg['vm_id'])
             except PermissionError:
@@ -295,6 +301,7 @@ def run_live(config_path:Path,stop:threading.Event=None):
                 # Never send the duplicated/mismatched identity or credentials.
                 ws.send({'type':'client.identity_error','reason':'IDENTITY_MISMATCH'})
                 raise
+            phase='connected'
             logger.info('WSS connected and VM identity verified')
             if last_connect_error:
                 ws.send({'type':'client.reconnect','reason':last_connect_error})
@@ -335,6 +342,7 @@ def run_live(config_path:Path,stop:threading.Event=None):
                     if active['id']==op_id:
                         active['id']=None
                         active['worker']=None
+            phase='wss_session'
             while not stop.is_set():
                 tick=time.monotonic()
                 if tick-last_hb>=30:
@@ -454,24 +462,40 @@ def run_live(config_path:Path,stop:threading.Event=None):
             # Emit types only; sensitive credential content must never enter logs.
             # Internal WSS exceptions contain only fixed diagnostic text and must
             # never include URLs, request headers, secrets or response content.
-            if isinstance(exc, PermissionError):
-                detail = 'VM identity or state permissions invalid'
+            if isinstance(exc, ssl.SSLCertVerificationError):
+                detail = 'TLS_CERT_VERIFY_FAILED'
+                last_connect_error = 'TLS_VERIFY_FAILED'
+            elif isinstance(exc, PermissionError):
+                detail = 'VM_IDENTITY_OR_STATE_PERMISSION_FAILED'
+                last_connect_error = 'IDENTITY_MISMATCH'
             elif isinstance(exc, WebsocketError):
-                detail = str(exc)[:95]
-            elif isinstance(exc, ssl.SSLCertVerificationError):
-                detail = 'certificate verification failed'
+                detail = 'WSS_PROTOCOL_OR_HTTP_HANDSHAKE_FAILURE'
+                last_connect_error = 'WEBSOCKET_ERROR'
+            elif isinstance(exc, ConnectionRefusedError):
+                detail = 'GATEWAY_CONNECTION_REFUSED'
+                last_connect_error = 'CONNECTION_REFUSED'
+            elif isinstance(exc, TimeoutError):
+                detail = 'GATEWAY_CONNECTION_TIMEOUT'
+                last_connect_error = 'CONNECTION_TIMED_OUT'
             elif isinstance(exc, OSError):
-                detail = 'OS error ' + str(getattr(exc, 'errno', 'unknown'))
+                detail = 'OS_ERROR_'+str(getattr(exc,'errno',None))[:8]
+                last_connect_error = 'OS_ERROR'
+            elif isinstance(exc, ValueError):
+                # The old log showed only `ValueError (internal error)` even for
+                # missing enrollment/config or malformed data. Report a fixed
+                # phase/code without leaking config values or credentials.
+                detail = {'load_config':'CONFIG_JSON_INVALID',
+                          'enrollment':'ENROLLMENT_PENDING_OR_INVALID',
+                          'validate_config':'INVALID_HTTPS_GATEWAY',
+                          'wss_handshake':'INVALID_WSS_ADDRESS',
+                          'machine_identity':'MACHINE_IDENTITY_INVALID',
+                          'wss_session':'INVALID_REMOTE_MESSAGE'}.get(phase,'INVALID_RUNTIME_VALUE')
+                last_connect_error = detail
             else:
-                detail = 'internal error'
-            logger.warning('WSS sync/reconnect: %s (%s)', type(exc).__name__, detail)
-            if isinstance(exc,ssl.SSLCertVerificationError):last_connect_error='TLS_VERIFY_FAILED'
-            elif isinstance(exc,PermissionError):last_connect_error='IDENTITY_MISMATCH'
-            elif isinstance(exc,ConnectionRefusedError):last_connect_error='CONNECTION_REFUSED'
-            elif isinstance(exc,TimeoutError):last_connect_error='CONNECTION_TIMED_OUT'
-            elif isinstance(exc,WebsocketError):last_connect_error='WEBSOCKET_ERROR'
-            elif isinstance(exc,OSError):last_connect_error='OS_ERROR'
-            else:last_connect_error='UNKNOWN_ERROR'
+                detail = 'UNEXPECTED_'+phase.upper()
+                last_connect_error = 'UNKNOWN_ERROR'
+            logger.warning('WSS sync/reconnect at %s: %s (%s)',phase,
+                           type(exc).__name__,detail)
             failure_count=min(failure_count+1,7)
             # A failed WSS connection must not make an otherwise healthy Agent
             # disappear from the dashboard. HTTPS fallback is heartbeat-only:

@@ -1,4 +1,4 @@
-# Application startup hook. Works as Standard User, Administrator, or SYSTEM.
+﻿# Application startup hook. Works as Standard User, Administrator, or SYSTEM.
 # Run only after the software has started and learned its actual URL/code.
 param(
   [ValidateSet('snowluma','dsh-fish-soul')][string]$App,

@@ -1,4 +1,4 @@
-# Installs ONLY Python libraries for the current Windows login, never another Python runtime.
+﻿# Installs ONLY Python libraries for the current Windows login, never another Python runtime.
 param([switch]$SkipInstall)
 $ErrorActionPreference='Stop'
 $project=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path

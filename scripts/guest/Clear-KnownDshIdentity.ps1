@@ -1,4 +1,4 @@
-# Run INSIDE a verified *full clone*. No action unless -Apply and -IAmOnDisposableClone supplied.
+﻿# Run INSIDE a verified *full clone*. No action unless -Apply and -IAmOnDisposableClone supplied.
 # Only known DSH / fish-soul data locations are removed. Review all custom plugin configs manually.
 [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='High')]
 param(

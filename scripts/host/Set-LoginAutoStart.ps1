@@ -1,4 +1,4 @@
-# Register a shortcut under CURRENT USER's startup folder, not as SYSTEM.
+﻿# Register a shortcut under CURRENT USER's startup folder, not as SYSTEM.
 param([switch]$Enable,[switch]$Disable)
 $ErrorActionPreference='Stop'
 if ($Enable -eq $Disable) { throw 'Specify exactly one of -Enable or -Disable.' }

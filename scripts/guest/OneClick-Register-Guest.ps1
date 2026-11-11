@@ -1,4 +1,4 @@
-# Runs INSIDE a freshly cloned customer Windows VM, using its own per-VM installer ZIP.
+﻿# Runs INSIDE a freshly cloned customer Windows VM, using its own per-VM installer ZIP.
 # Elevated once; registers unique VM identity, waits for enrollment, then installs V2 auto-start service.
 param([int]$EnrollmentWaitSeconds = 120)
 $ErrorActionPreference = 'Stop'

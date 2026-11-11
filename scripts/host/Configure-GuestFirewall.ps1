@@ -1,4 +1,4 @@
-# One-time, opt-in restricted Windows Firewall allow rule for Guest Gateway ONLY.
+﻿# One-time, opt-in restricted Windows Firewall allow rule for Guest Gateway ONLY.
 # This does not replace iKuai ACL or enforce same-subnet VM-to-VM isolation.
 $ErrorActionPreference='Stop'
 $project=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path

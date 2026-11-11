@@ -1,4 +1,4 @@
-# Read-only OOBE diagnostics. Does not display passwords or API tokens.
+﻿# Read-only OOBE diagnostics. Does not display passwords or API tokens.
 $ErrorActionPreference='Continue'
 $root=Join-Path $env:ProgramData 'VMO-OOBE'
 Write-Host '== VM Orchestrator OOBE diagnostic (no secrets) ==' -ForegroundColor Cyan

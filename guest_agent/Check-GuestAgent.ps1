@@ -1,4 +1,4 @@
-# Read-only Guest Agent diagnosis; does not print enrollment tokens or agent keys.
+﻿# Read-only Guest Agent diagnosis; does not print enrollment tokens or agent keys.
 $ErrorActionPreference = 'Continue'
 $program = Join-Path $env:ProgramFiles 'VM-Orchestrator\GuestAgent\agent.py'
 if ($env:ProgramW6432) { $program = Join-Path $env:ProgramW6432 'VM-Orchestrator\GuestAgent\agent.py' }

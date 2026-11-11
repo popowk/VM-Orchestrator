@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.39 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.40 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -1022,7 +1022,7 @@ window.VMOSelfService=(()=>{
    const installed=info.installed_version||'尚未上报';const bundled=info.bundled_version||'未知';
    installedAgentVersion=info.installed_version||'';commandButton();
    const task=info.latest;
-   let detail='';
+   let detail=info.auto_update_enabled?' · 自动更新已开启（空闲时自动升级）':' · 自动更新已关闭';
    if(task){
      if(info.verified)detail=' · 新版本已由 WSS 心跳确认';
      else if(task.status==='FAILED')detail=' · 最近安装任务失败（请检查日志）';

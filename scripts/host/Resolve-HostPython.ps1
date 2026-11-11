@@ -1,4 +1,4 @@
-# Choose an installed 64-bit Windows Python, NOT the old local .venv.
+﻿# Choose an installed 64-bit Windows Python, NOT the old local .venv.
 # Windows PowerShell 5.1 compatible. This is a function file (dot-source it).
 function Get-VMOHostPython {
     param([Parameter(Mandatory=$true)][string]$Project)

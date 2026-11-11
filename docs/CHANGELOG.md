@@ -1,3 +1,12 @@
+## v1.4.40 · Guest Agent automated upgrades and WSS diagnostic categories
+
+- Host checks authenticated Guest WSS heartbeat versions and, when a newer bundled Guest Agent exists, queues a per-VM SHA256-verified upgrade via the existing rollback-capable SYSTEM installer. Enabled by default; set `VMO_GUEST_AGENT_AUTO_UPDATE=0` on Host to disable.
+- Existing v2.0.21 Guests receive the first upgrade without installing a separate helper; no new Guest listening port is used.
+- Agent upgrades are deferred while remote operations or software updates are queued or running. Retries are at least 90 minutes apart and limited to 3 per 24 hours per VM/version.
+- WSS errors now print fixed, non-secret phase categories (enrollment, config, TLS, handshake, identity and session), rather than the uninformative `ValueError (internal error)`.
+- Transient socket reset or timeout continues to be retried automatically; trusted CA and per-VM identity stay unchanged.
+- Guest Agent bundled version: v2.0.22. As with prior releases, upgrade runner preserves protected state and rolls back if Windows service installation fails. Windows/VMware end-to-end testing remains required.
+
 ## v1.4.39（2026-11-11）
 - 以用户提供的 v1.4.38 Review-NonBlocking-Fixed 为基础合并，保留客户自助历史状态不阻塞、新任务仍隔离及人工核对。
 - 恢复安全的 GitHub Releases 自动更新页和 Windows 独立安装与回滚。

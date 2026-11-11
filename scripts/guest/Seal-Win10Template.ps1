@@ -1,4 +1,4 @@
-# Irreversible step on BUILD CLONE only. This does not validate external account cleanup.
+﻿# Irreversible step on BUILD CLONE only. This does not validate external account cleanup.
 param(
     [switch]$IAmOnDisposableClone,
     [switch]$IReviewedAllAppAndWindowsCredentials,

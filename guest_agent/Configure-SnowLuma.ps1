@@ -1,4 +1,4 @@
-# Configure a LOCAL, explicit SnowLuma portable updater for this Guest only.
+﻿# Configure a LOCAL, explicit SnowLuma portable updater for this Guest only.
 # This never installs packages, never touches app data, and never changes enrollment identity.
 param([string]$ProgramDir)
 $ErrorActionPreference='Stop'

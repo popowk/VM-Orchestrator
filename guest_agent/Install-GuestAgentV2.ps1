@@ -1,4 +1,4 @@
-# VMO Guest Agent V2: durable WSS results and safe protected-state upgrade.
+﻿# VMO Guest Agent V2: durable WSS results and safe protected-state upgrade.
 # Run elevated in the Guest only. Existing enrollment credentials are migrated,
 # NEVER regenerated. Legacy V1 scheduled task is REMOVED after V2 starts.
 param([string]$PythonExe, [switch]$TemplateMode)
@@ -12,7 +12,7 @@ $state = Join-Path $program 'state'
 $legacy = Join-Path $env:ProgramData 'VMO'
 $config = Join-Path $state 'agent.json'
 $serviceName = 'VMO-GuestAgentV2'
-$files = @('agent-release.json','agent.py','agent_v2.py','interactive_session.py','upload_directory.py','app_tunnel.py','ws_client.py','app_registry.py','local_app_report.py','update_lifecycle.py','dsh_updates.py','quick_updates.py','quick_plugin_update.py','update_commands.py','user_update_exec.py','Configure-ManagedUpdates.ps1','windows_service.py','machine_identity.py','Probe-Gateway.py','Test-AppEndpoints.ps1','Report-App-Startup.ps1','Report-App.cmd','Report-App-JSON.py','Set-RemotePermissions.ps1','Enable-RemoteCommands.cmd','Disable-RemoteCommands.cmd')
+$files = @('agent-release.json','agent.py','agent_v2.py','interactive_session.py','upload_directory.py','app_tunnel.py','ws_client.py','app_registry.py','local_app_report.py','update_lifecycle.py','dsh_updates.py','quick_updates.py','quick_plugin_update.py','update_commands.py','user_update_exec.py','Configure-ManagedUpdates.ps1','windows_service.py','machine_identity.py','Probe-Gateway.py','Report-App-Startup.ps1','Report-App.cmd','Report-App-JSON.py','Set-RemotePermissions.ps1','Enable-RemoteCommands.cmd','Disable-RemoteCommands.cmd')
 
 function Assert-ExitCode([string]$Operation) {
     if ($LASTEXITCODE -ne 0) { throw "$Operation failed (exit $LASTEXITCODE)" }
