@@ -1,4 +1,4 @@
-﻿# VM Orchestrator V1.4.38 system Python + remote task recovery (Windows PowerShell 5.1 compatible)
+# VM Orchestrator V1.4.39 system Python + remote task recovery (Windows PowerShell 5.1 compatible)
 # Keep database, TLS, DPAPI keys, VMs and templates. Ignore legacy .venv.
 param(
     [string]$Target = 'D:\VMware\VM-Orchestrator',
@@ -47,7 +47,7 @@ if (-not (Test-Path -LiteralPath $Target -PathType Container)) {
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backup = $null
 if (Test-Path -LiteralPath (Join-Path $Target 'app\main.py') -PathType Leaf) {
-    $backup = Join-Path $Target ('backup-before-v1.4.38-' + $stamp)
+    $backup = Join-Path $Target ('backup-before-v1.4.39-' + $stamp)
     New-Item -ItemType Directory -Path $backup -Force | Out-Null
     $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $selfGrant='*' + $currentSid + ':(OI)(CI)F'
@@ -84,7 +84,7 @@ Get-ChildItem -LiteralPath $source -Recurse -File -Force | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
     $script:copied++
 }
-Write-Host "VM Orchestrator V1.4.38 installed: $copied files." -ForegroundColor Green
+Write-Host "VM Orchestrator V1.4.39 installed: $copied files." -ForegroundColor Green
 Write-Host 'Existing database, TLS/DPAPI keys, legacy .venv and all VM files are preserved.' -ForegroundColor Green
 Write-Host 'Preparing system Python dependencies (no new .venv)...' -ForegroundColor Cyan
 & (Join-Path $Target 'scripts\host\Install-HostPythonDeps.ps1')
@@ -134,7 +134,7 @@ if ($backup) {
     # named historical CHANGES file are eligible for archival into this backup.
     $obsolete += 'CHANGES-1.4.3.txt'
     $oldNotes = @(Get-ChildItem -LiteralPath $Target -File -Filter 'README-V1.4.*.md' -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^README-V1\.4\.[0-9]+\.md$' -and $_.Name -ne 'README-V1.4.38.md' })
+        Where-Object { $_.Name -match '^README-V1\.4\.[0-9]+\.md$' -and $_.Name -ne 'README-V1.4.39.md' })
     foreach ($oldNote in $oldNotes) { $obsolete += $oldNote.Name }
     foreach ($oldRel in $obsolete) {
         $oldPath = Join-Path $Target $oldRel

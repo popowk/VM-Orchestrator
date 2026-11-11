@@ -1,4 +1,4 @@
-﻿# Windows 10/11 Host: allow TCP 8765 ONLY from designated management LAN IPs.
+# Windows 10/11 Host: allow TCP 8765 ONLY from designated management LAN IPs.
 # Example: .\Configure-Host8765-Firewall.ps1 -AllowedRemoteAddresses '192.168.2.0/24'
 # This script does NOT remove other broad allow rules that may exist for Python.
 param(

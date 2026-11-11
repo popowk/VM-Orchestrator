@@ -1,4 +1,4 @@
-﻿# VMO 1.4.38 - single-process Host + Guest bootstrap.
+# VMO 1.4.39 - single-process Host + Guest bootstrap.
 # Run in the interactive Windows account that owns VMware Workstation.
 param(
     [string]$TemplatesRoot = 'D:\VMware\Template',

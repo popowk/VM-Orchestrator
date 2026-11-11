@@ -1,4 +1,4 @@
-﻿# Runs as a detached LocalSystem process started by the existing VMO Guest Agent.
+# Runs as a detached LocalSystem process started by the existing VMO Guest Agent.
 # The archive was downloaded over certificate-verified HTTPS and SHA256 checked.
 # Do not attempt to update the active service from inside its own worker.
 param(

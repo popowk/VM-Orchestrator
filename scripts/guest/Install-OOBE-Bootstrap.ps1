@@ -1,4 +1,4 @@
-﻿# Template BUILD COPY only. Run as Administrator before Sysprep.
+# Template BUILD COPY only. Run as Administrator before Sysprep.
 # No customer name, password, token or Guest identity is embedded in the golden image.
 [CmdletBinding()]
 param([switch]$ConfirmBuildClone)

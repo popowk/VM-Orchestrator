@@ -58,8 +58,8 @@ def _get(url: str, token: str, max_bytes: int, accept: str) -> bytes:
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != "api.github.com":
         raise UpdateError("更新请求只能连接 GitHub 官方 API")
-    headers = {"Accept": accept, "User-Agent": "VM-Orchestrator-Self-Updater/1.4.38",
-               "X-GitHub-Api-Version": "2026-03-10"}
+    headers = {"Accept": accept, "User-Agent": "VM-Orchestrator-Self-Updater/1.4.39",
+               "X-GitHub-Api-Version": "2022-11-28"}
     if token:
         headers["Authorization"] = "Bearer " + token
     req = Request(url, headers=headers)

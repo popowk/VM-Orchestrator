@@ -1,4 +1,4 @@
-﻿# VMO Guest Agent V2: durable WSS results and safe protected-state upgrade.
+# VMO Guest Agent V2: durable WSS results and safe protected-state upgrade.
 # Run elevated in the Guest only. Existing enrollment credentials are migrated,
 # NEVER regenerated. Legacy V1 scheduled task is REMOVED after V2 starts.
 param([string]$PythonExe, [switch]$TemplateMode)

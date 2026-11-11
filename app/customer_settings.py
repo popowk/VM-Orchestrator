@@ -73,14 +73,20 @@ class CustomerSettings:
         with self.db() as d:r=d.execute('SELECT * FROM customer_announcements WHERE enabled=1 ORDER BY created_at DESC,rowid DESC LIMIT 1').fetchone()
         return dict(r) if r else None
     def publish(self,body,repeat_hours,enabled):
-        if not isinstance(body,str) or len(body.strip())>4000 or (enabled and not body.strip()):raise ValueError('公告正文必填，最多4000字符')
+        if not isinstance(body,str):raise ValueError('公告正文必须为文字')
+        # Keep real line breaks and indentation, only normalize Windows/Mac line-endings.
+        # Text is later rendered via textContent (not innerHTML).
+        body=body.replace('\r\n','\n').replace('\r','\n')
+        if len(body)>4000 or (enabled and not body.strip()) or any(
+            ord(ch)<32 and ch not in '\n\t' for ch in body
+        ):raise ValueError('公告正文必填，最多4000字符，不支持控制字符')
         if not isinstance(repeat_hours,int) or isinstance(repeat_hours,bool) or not 1<=repeat_hours<=720:raise ValueError('公告间隔为1至720小时')
         with self.lock,self.db() as d:
             d.execute('UPDATE customer_announcements SET enabled=0')
             if enabled:
-                id_=str(uuid.uuid4());d.execute('INSERT INTO customer_announcements VALUES(?,?,?,?,?)',(id_,body.strip(),repeat_hours,1,int(time.time())))
+                id_=str(uuid.uuid4());d.execute('INSERT INTO customer_announcements VALUES(?,?,?,?,?)',(id_,body,repeat_hours,1,int(time.time())))
             else:id_=None
-        return {'id':id_,'enabled':bool(enabled),'repeat_hours':repeat_hours,'body':body.strip() if enabled else ''}
+        return {'id':id_,'enabled':bool(enabled),'repeat_hours':repeat_hours,'body':body if enabled else ''}
     def pending(self,service_ref):
         a=self.active_announcement()
         if not a:return None

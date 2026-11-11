@@ -1,18 +1,29 @@
-## v1.4.38
-- 公开 GitHub 发布流程与审计修复；更新状态竞争修复；GitHub 重定向的 Token 保护。
-- 保留 v1.4.37 功能与旧版客户数据兼容。
+## v1.4.39（2026-11-11）
+- 以用户提供的 v1.4.38 Review-NonBlocking-Fixed 为基础合并，保留客户自助历史状态不阻塞、新任务仍隔离及人工核对。
+- 恢复安全的 GitHub Releases 自动更新页和 Windows 独立安装与回滚。
+- 恢复 CMD 8,000 / PowerShell 12,000 字符长命令，Agent v2.0.21。
+- 恢复 1fps 可关闭的本机 VNC 截图预览，管理员授权，不额外开放网络端口。
+- 已合并并检查前端控制与后端端点；生产端到端更新仍需 Windows 真机测试。
 
-## v1.4.37
+## 1.4.38 (2026-11-11)
+- Client self-service action button always displays “执行操作”; remove the review-related notice and “查看执行限制” UI.
+- UNKNOWN, TIMED_OUT, VERIFY_REQUIRED and ACKNOWLEDGED history records no longer block customer self-service actions or their 30-second cooldown.
+- Preserve in-flight execution exclusion, atomic SQLite reservation, idempotency, authorization and Guest-online checks.
+- Administrator review remains as an audit action “标记已核对” rather than an unlock requirement.
+- Preserve v1.4.37 announcement formatting, five-record views and product-template reinstall fallback.
 
-- 系统更新 UI 与 GitHub Releases 检查/安装、SHA256 验证、Windows 独立更新器、备份与回滚。
-- DPAPI 私有仓库令牌配置和 GitHub Actions 标签发布流程。
-- Guest Agent 不变，保留 v1.4.36 的长命令与一秒截图预览功能。
+## 1.4.37 (2026-11-11)
+- Keep customer announcement line breaks, add safe preview.
+- Fix client action button blocked-state UX and secure UUID fallback.
+- Show last five named self-service operations and last five localized VM jobs.
+- Preserve durable operation labels and check blockers beyond visible history.
 
-## v1.4.36 · Remote Commands and Preview
-
-- Host + Guest command length increased to CMD 8,000 / PowerShell 12,000 characters; Agent v2.0.21 required beyond 2,000.
-- Authenticated 960×540 JPEG screenshot preview above WSS diagnostics, user-controlled at ~1 FPS with automatic stop.
-- No Guest Gateway route exposure, no new listener, no test artifacts shipped.
+## 1.4.36 (2026-11-10)
+- Repair customer reinstall fallback to currently sealed template for same product only.
+- Reconcile stale self-service commands and queued/claimed update tasks; review unknown outcomes, prevent automatic retries.
+- Admin/customer self-service UI redesign and accessible 48px customer controls.
+- Admin review refuses to unblock while Guest command/update is pending; cross-process reservation serialized by SQLite.
+- Preserve existing tenant and administrator route isolation.
 
 # v1.4.34 · 单进程 / UI 与发布包整合（2026-11-10）
 

@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.38 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.39 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -37,9 +37,9 @@ function setLogin(visible){
   // Hide first (before any overlay, redirect or asynchronous session lookup).
   $('adminShell').hidden=visible || !state.csrf;
   $('loginScreen').hidden=!visible;
-  if(visible){window.VMORemote?.stopPreview();state.csrf='';VMOCloseEvents();$('loginError').textContent='';}
+  if(visible){state.csrf='';VMOCloseEvents();$('loginError').textContent='';}
 } 
-function navigate(page){if(!pages[page])return;if(page!=='remote')window.VMORemote?.stopPreview();state.activePage=page;if(page==='system')window.VMOSystemUpdate?.load();else if(page==='clients')window.VMOClients?.refresh();else if(page==='remote')window.VMORemote?.refresh();else refresh();document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));$('pageTitle').textContent=pages[page];$('pageCrumb').textContent=page==='overview'?'概览':pages[page];}
+function navigate(page){if(!pages[page])return;const previous=state.activePage;if(previous==='remote'&&page!=='remote')window.VMORemote?.stopPreview();state.activePage=page;if(page==='clients')window.VMOClients?.refresh();else if(page==='remote')window.VMORemote?.refresh();else if(page==='system')window.VMOSystemUpdate?.load();else refresh();document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));$('pageTitle').textContent=pages[page];$('pageCrumb').textContent=page==='overview'?'概览':pages[page];}
 async function refresh(){if(state.busy || !state.csrf)return;state.busy=true; try{
   const [tpl,vms,jobs,caps,defaults,guests,packages,updatesPaged,reinstalls,jobsPaged] = await Promise.all([
     request('/api/templates'),request('/api/vms'),request('/api/jobs'),request('/api/host/capabilities'),
@@ -624,7 +624,7 @@ window.VMOClients=(()=>{
     $('bizProductForm').reset();
     $('bizProductSave').textContent='保存商品映射';
     $('bizProductCancel').hidden=true;
-    $('bizProductMode').textContent='选择一个商品映射进行修改；保存后只影响后续新开通的虚拟机。';
+    $('bizProductMode').textContent='选择一个商品映射进行修改；保留旧实例原模板；如果原模板失效，客户重装会使用该商品当前已封存模板。';
   }
   function editMapping(x){
     editingProduct=x.product_ref;
@@ -634,7 +634,7 @@ window.VMOClients=(()=>{
     $('bizAllowUpdates').checked=Boolean(x.allow_updates);
     $('bizProductSave').textContent='保存模板修改';
     $('bizProductCancel').hidden=false;
-    $('bizProductMode').textContent='正在修改商品 '+x.product_ref+'；现有客户 VM 和已保存的历史模板不会改变。';
+    $('bizProductMode').textContent='正在修改商品 '+x.product_ref+'；已开通客户保留原模板，原模板失效后重装可回退到该商品的新封存模板。';
     $('bizProductForm').scrollIntoView({behavior:'smooth',block:'center'});
   }
   async function deleteMapping(x){
@@ -667,7 +667,7 @@ window.VMOClients=(()=>{
       const r=el('div','template-card'),info=el('div'),act=el('div','snap-toolbar');
       const mapped=state.templates.find(t=>t.id===x.template_id);
       info.append(el('strong','',x.product_ref),el('small','',`黄金模板：${mapped?.name||x.template_id} · 客户软件更新：${x.allow_updates?'允许':'禁用'}`));
-      info.append(el('small','',`现有服务实例：${services.filter(s=>s.product_ref===x.product_ref).length} · 修改绑定仅影响新开通`));
+      info.append(el('small','',`现有服务实例：${services.filter(s=>s.product_ref===x.product_ref).length} · 原模板失效时允许同商品安全回退`));
       const provisioning=services.some(s=>s.product_ref===x.product_ref && s.status==='PROVISIONING');
       const remove=btn(provisioning?'开通中不可删除':'删除绑定','danger small',()=>deleteMapping(x),provisioning);
       if(provisioning)remove.title='该商品仍有开通中的订单，请等待订单结束后再删除绑定';
@@ -718,7 +718,7 @@ window.VMOClients=(()=>{
     $('bizProductCancel').onclick=cancelEdit;
     $('bizProductForm').onsubmit=async e=>{e.preventDefault();try{
       await request('/api/business/admin/products','PUT',{product_ref:editingProduct||$('bizProductRef').value.trim(),template_id:$('bizTemplate').value,allow_updates:$('bizAllowUpdates').checked});
-      cancelEdit();toast('思博商品映射已保存（仅影响新开通）');await refresh();
+      cancelEdit();toast('思博商品映射已保存（原模板失效时可安全回退）');await refresh();
     }catch(ex){toast(ex.message,true);}};
     $('bizBindForm').onsubmit=async e=>{e.preventDefault();try{await request('/api/business/admin/bind-existing','POST',{service_ref:$('bizServiceRef').value.trim(),customer_ref:$('bizCustomerRef').value.trim(),product_ref:$('bizProductForBind').value,vm_id:$('bizExistingVm').value,
      expires_at:new Date($('bizExpiresAt').value+':00+08:00').toISOString().replace('.000Z','Z'),
@@ -773,7 +773,7 @@ window.VMOSelfService=(()=>{
  let catalog=[];
  let settingsLoaded=false;
  function kindChange(){const isUpdate=$('selfKind').value==='SOFTWARE_UPDATE';$('selfCommandFields').hidden=isUpdate;$('selfUpdateFields').hidden=!isUpdate;}
- function reset(){ $('selfActionForm').reset();$('selfEditId').value='';$('selfEnabled').checked=false;kindChange();}
+ function reset(){ $('selfActionForm').reset();$('selfEditId').value='';$('selfEnabled').checked=false;kindChange();$('selfEditorMode').textContent='新建一项客户可执行操作';$('selfSave').textContent='保存操作';render();}
  function prepare(){
    const product=$('selfProduct'),old=product.value;
    if(document.activeElement!==product){product.replaceChildren(new Option('选择商品',''));
@@ -792,10 +792,12 @@ window.VMOSelfService=(()=>{
      $('customerDefaultReinstalls').value=d.monthly_reinstall_limit;
      const a=data.announcement;
      $('customerAnnouncementBody').value=a?.body||'';
+     updateAnnouncementPreview();
      $('customerAnnouncementHours').value=a?.repeat_hours||24;
      $('customerAnnouncementEnabled').checked=!!a;
    }catch(e){toast('读取公告与额度失败：'+e.message,true);}
  }
+ function updateAnnouncementPreview(){const text=$('customerAnnouncementBody').value; $('customerAnnouncementPreview').textContent=text||'公告内容将显示在这里';}
  function quotaValues(prefix){return {
    snapshot_limit:Number($(prefix+'Snapshots').value),
    monthly_restore_limit:Number($(prefix+'Restores').value),
@@ -805,29 +807,40 @@ window.VMOSelfService=(()=>{
    if(!state.csrf)return;
    if(!settingsLoaded){await loadCustomerSettings();settingsLoaded=true;}
    try{const [actions,products,executions]=await Promise.all([request('/api/business/admin/self-actions'),Array.isArray(preloadedProducts)?Promise.resolve(preloadedProducts):request('/api/business/admin/products'),request('/api/business/admin/self-executions')]);
-     catalog=actions;window.VMOSelfService.products=products;prepare();render();renderExecutions(executions);window.VMOBizUI?.metrics({services:window.VMOClients?.services||[],products,actions});}
+     catalog=actions;window.VMOSelfService.products=products;prepare();render();renderExecutions(executions);$('selfTotalCount').textContent=actions.length;$('selfEnabledCount').textContent=actions.filter(a=>a.enabled).length;$('selfPendingCount').textContent=executions.filter(a=>['UNKNOWN','TIMED_OUT','VERIFY_REQUIRED'].includes(a.status)).length;window.VMOBizUI?.metrics({services:window.VMOClients?.services||[],products,actions});}
    catch(e){$('selfActionList').textContent='加载自助操作失败：'+e.message;}
  }
- function render(){const root=$('selfActionList');root.replaceChildren();
-   for(const a of catalog){const row=el('div','template-card'),info=el('div'),ops=el('div','snap-toolbar');
-     const desc=a.kind==='COMMAND'?(a.shell+' · '+({wait:'等待结果',detached:'后台启动',interactive:'前台运行'}[a.run_mode]||a.run_mode)):'ZIP 更新包 · '+(state.packages.find(p=>p.id===a.package_id)?.version||'包已移除');
-     info.append(el('strong','',a.label),el('small','',a.product_ref+' · '+desc+' · 顺序 '+a.sort_order+' · '+(a.enabled?'客户可用':'已禁用')),el('small','',a.description||'无客户说明'));
-     ops.append(btn('编辑','ghost small',()=>{for(const [id,val] of [['selfEditId',a.id],['selfProduct',a.product_ref],['selfLabel',a.label],['selfDescription',a.description],['selfKind',a.kind],['selfShell',a.shell],['selfCommand',a.command],['selfRunMode',a.run_mode],['selfCwd',a.cwd],['selfTimeout',a.timeout_seconds],['selfPackage',a.package_id],['selfInstallDir',a.install_dir],['selfSortOrder',a.sort_order||100]])$(id).value=val;
-       $('selfEnabled').checked=!!a.enabled;kindChange();$('selfActionForm').scrollIntoView({behavior:'smooth',block:'start'});$('selfLabel').focus();}));
-     ops.append(btn(a.enabled?'禁用':'启用','ghost small',async()=>{try{await request('/api/business/admin/self-actions/'+encodeURIComponent(a.id)+'/enabled','PUT',{enabled:!a.enabled});await refresh();toast('操作状态已更新');}catch(e){toast(e.message,true);}}));
-     ops.append(btn('删除','danger small',async()=>{if(!confirm('删除「'+a.label+'」？已执行任务记录会保留。'))return;try{await request('/api/business/admin/self-actions/'+encodeURIComponent(a.id),'DELETE');await refresh();toast('已删除');}catch(e){toast(e.message,true);}}));
-     row.append(info,ops);root.append(row);
+ function render(){
+   const root=$('selfActionList');root.replaceChildren();
+   const search=$('selfActionSearch').value.trim().toLowerCase(),filter=$('selfActionFilter').value;
+   const visible=catalog.filter(a=>(filter==='all'||(filter==='enabled')===!!a.enabled)&&(!search||[a.label,a.description,a.product_ref].some(x=>String(x||'').toLowerCase().includes(search))));
+   for(const a of visible){
+     const row=el('article','self-action-card'+($('selfEditId').value===a.id?' is-editing':''));
+     const top=el('div','self-action-card-top'),info=el('div'),status=el('span','self-status'+(a.enabled?' active':''),a.enabled?'已启用':'未启用');
+     const desc=a.kind==='COMMAND'?(a.shell+' · '+({wait:'等待结果',detached:'后台启动',interactive:'桌面运行'}[a.run_mode]||a.run_mode)):'更新包 · '+(state.packages.find(p=>p.id===a.package_id)?.version||'包已移除');
+     info.append(el('strong','',a.label),el('small','',a.product_ref+' · '+desc+' · 排序 '+a.sort_order));
+     if(a.description)info.append(el('small','',a.description));
+     top.append(info,status);
+     const ops=el('div','self-action-actions');
+     ops.append(btn('编辑','ghost small',()=>{
+       for(const [id,val] of [['selfEditId',a.id],['selfProduct',a.product_ref],['selfLabel',a.label],['selfDescription',a.description],['selfKind',a.kind],['selfShell',a.shell],['selfCommand',a.command],['selfRunMode',a.run_mode],['selfCwd',a.cwd],['selfTimeout',a.timeout_seconds],['selfPackage',a.package_id],['selfInstallDir',a.install_dir],['selfSortOrder',a.sort_order??100]])$(id).value=val??'';
+       $('selfEnabled').checked=!!a.enabled;kindChange();$('selfEditorMode').textContent='正在编辑 · '+a.label;$('selfSave').textContent='保存修改';render();$('selfActionForm').scrollIntoView({behavior:'smooth',block:'start'});$('selfLabel').focus({preventScroll:true});
+     }));
+     ops.append(btn(a.enabled?'停用':'启用','ghost small',async()=>{try{await request('/api/business/admin/self-actions/'+encodeURIComponent(a.id)+'/enabled','PUT',{enabled:!a.enabled});await refresh();toast('操作状态已更新');}catch(e){toast(e.message,true);}}));
+     ops.append(btn('删除','danger small',async()=>{if(!confirm('删除「'+a.label+'」？已执行任务记录会保留。'))return;try{await request('/api/business/admin/self-actions/'+encodeURIComponent(a.id),'DELETE');if($('selfEditId').value===a.id)reset();await refresh();toast('操作已删除');}catch(e){toast(e.message,true);}}));
+     row.append(top,ops);root.append(row);
    }
-   if(!catalog.length)root.append(el('p','muted','尚未配置客户自助操作。'));
+   if(!visible.length)root.append(el('p','self-empty',catalog.length?'没有符合筛选条件的操作。':'尚未配置操作。请在右侧创建第一项。'));
  }
  function renderExecutions(items){
    const root=$('selfExecutionList');root.replaceChildren();
-   for(const a of items){const row=el('div','template-card'),info=el('div'),ops=el('div','snap-toolbar');
+   for(const a of items){
+     const row=el('div','self-execution-row'),info=el('div'),ops=el('div','snap-toolbar');
      const label=catalog.find(x=>x.id===a.action_id)?.label||'已删除的操作';
-     info.append(el('strong','',label+' · '+a.status),
-       el('small','',`实例 ${a.service_ref} · ${VMO_BJT(a.updated_at)}`));
+     const status={UNKNOWN:'结果未知·需核对',TIMED_OUT:'超时·需核对',VERIFY_REQUIRED:'待核验',SUCCEEDED:'执行成功',FAILED:'执行失败',RUNNING:'执行中',QUEUED:'排队中',CLAIMED:'已接收',RESERVING:'准备下发',ACKNOWLEDGED:'管理员已确认'}[a.status]||a.status;
+     info.append(el('strong','',label+' · '+status),el('small','',`实例 ${a.service_ref} · ${VMO_BJT(a.updated_at)}`));
      if(['UNKNOWN','TIMED_OUT','VERIFY_REQUIRED'].includes(a.status)){
-       ops.append(btn('已核对现场，解除阻塞','danger small',async()=>{
+       ops.append(btn('标记已核对','ghost small',async()=>{
          if(!confirm('确认已检查对应 VM 的进程、应用版本和 Agent 日志，明确当前任务不需要重试？'))return;
          try{await request('/api/business/admin/self-executions/'+encodeURIComponent(a.request_id)+'/acknowledge','POST',
            {reviewed_guest_state:true});toast('记录已人工确认；没有重复执行命令');await refresh();}
@@ -836,12 +849,13 @@ window.VMOSelfService=(()=>{
      }
      row.append(info,ops);root.append(row);
    }
-   if(!items.length)root.append(el('p','muted','暂无客户自助操作记录。'));
+   if(!items.length)root.append(el('p','self-empty','暂无执行记录。'));
  }
  window.addEventListener('DOMContentLoaded',()=>{
    $('customerAnnouncementForm').onsubmit=async e=>{e.preventDefault();
      try{await request('/api/business/admin/customer-announcement','POST',{body:$('customerAnnouncementBody').value,repeat_hours:Number($('customerAnnouncementHours').value),enabled:$('customerAnnouncementEnabled').checked});toast('公告设置已发布，新版本会立即向客户展示');await loadCustomerSettings();}catch(ex){toast(ex.message,true);}
    };
+   $('customerAnnouncementBody').addEventListener('input',updateAnnouncementPreview);
    $('customerDefaultsForm').onsubmit=async e=>{e.preventDefault();
      try{await request('/api/business/admin/customer-settings/defaults','PUT',quotaValues('customerDefault'));toast('默认额度已更新');}catch(ex){toast(ex.message,true);}
    };
@@ -859,6 +873,8 @@ window.VMOSelfService=(()=>{
      try{await request('/api/business/admin/customer-settings/services/'+encodeURIComponent(ref),'PUT',quotaValues('customerLimit'));toast('客户额度已更新');$('customerLimitLoad').click();}catch(ex){toast(ex.message,true);}
    };
    $('selfKind').onchange=kindChange;
+   $('selfActionSearch').oninput=render;
+   $('selfActionFilter').onchange=render;
    $('selfRefresh').onclick=()=>refresh();
    $('selfReset').onclick=reset;
    $('selfActionForm').onsubmit=async e=>{e.preventDefault();

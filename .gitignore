@@ -8,19 +8,3 @@ reports/
 *.log
 *.key
 *.pem
-
-# Runtime and credential material never belong in Git
-/data/
-/dist/
-/backup-before-*/
-*.db
-*.pfx
-*.p12
-*.crt
-*.cert
-*.dpapi
-*token*.txt
-*.session
-*.bak
-.vscode/
-.idea/

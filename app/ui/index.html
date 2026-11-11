@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.38"></script>
+<script src="/ui/app-route-recover.js?v=1.4.39"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.38">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.39">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.38" defer></script>
+<script src="/ui/admin.js?v=1.4.39" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -38,13 +38,13 @@
     <section class="page" id="page-system">
       <div class="system-update-hero">
         <div><span class="sys-eyebrow">SYSTEM / GITHUB RELEASES</span><h2>VM Orchestrator · 系统更新</h2>
-        <p>从绑定的 GitHub 私有仓库获取正式版本，验证 SHA-256 后自动备份、安装与重启。</p></div>
+        <p>从官方 GitHub 公开仓库获取正式版本，验证 SHA-256 后自动备份、安装与重启。</p></div>
         <span class="sys-safe-pill">仅管理员 · 数据不覆盖</span>
       </div>
       <div class="sys-version-grid">
         <div class="panel sys-version"><small>当前安装</small><strong id="sysCurrentVersion">—</strong><span>本机运行版本</span></div>
         <div class="panel sys-version"><small>GitHub 最新正式版</small><strong id="sysLatestVersion">尚未检查</strong><span id="sysAvailability">等待检查 GitHub Releases</span></div>
-        <div class="panel sys-version"><small>更新仓库</small><strong class="sys-repo-name" id="sysRepo">—</strong><span id="sysAuth">私有仓库需要本机授权令牌</span></div>
+        <div class="panel sys-version"><small>更新仓库</small><strong class="sys-repo-name" id="sysRepo">—</strong><span id="sysAuth">公开仓库默认不需要 Token</span></div>
       </div>
       <section class="panel">
         <div class="panel-head"><div><h2>版本检查与安装</h2><p>安装前暂停新的操作，存在运行中 VM 管理任务时不会执行更新。更新期间控制台会暂时断线。</p></div></div>
@@ -59,7 +59,7 @@
         <div><b>② 完整性校验</b><p>ZIP 必须与同一 Release 的 .sha256 校验文件一致。</p></div>
         <div><b>③ 备份与升级</b><p>保存现有程序副本；数据库、证书、凭据和虚拟机保持原样。</p></div>
         <div><b>④ 重启与回滚</b><p>服务健康检查失败时恢复旧程序并尝试重启。</p></div>
-        </div><p class="muted">私有仓库访问：在 Windows 宿主机打开 Manage.cmd → GitHub 更新源，设置令牌后重新启动 Host 服务。</p></section>
+        </div><p class="muted">公开仓库可直接检查更新；仅私有仓库需要在 Windows 宿主机配置只读 Token。</p></section>
     </section>
     <section class="page active" id="page-overview">
       <div class="stats">
@@ -228,45 +228,71 @@
           <label>授权黄金模板<select id="bizTemplate" required></select></label>
           <label class="check-row"><input type="checkbox" id="bizAllowUpdates"><span><b>允许客户使用管理员发布的软件更新操作</b><small>仅注册 Guest Agent 后可用</small></span></label>
           <div class="form-submit"><button type="submit" class="btn primary" id="bizProductSave">保存商品映射</button><button type="button" class="btn ghost" id="bizProductCancel" hidden>取消修改</button></div>
-        </form><p class="muted" id="bizProductMode">选择一个商品映射进行修改；保存后只影响后续新开通的虚拟机。</p><div id="bizProducts" class="template-list"></div></section>
+        </form><p class="muted" id="bizProductMode">选择商品后可修改模板映射；原客户模板可用时保持不变，失效时才可回退到新模板。</p><div id="bizProducts" class="template-list"></div></section>
           </div>
-          <div class="biz-view" data-biz-view="actions"><div class="biz-work-head"><div><h3>客户自助操作</h3><p>设置客户能看到和执行的操作，同时处理异常任务。</p></div></div>
-<section class="panel biz-panel"><div class="panel-head"><div><h2>客户自助操作配置</h2><p>为指定思博商品预设客户可点击的命令或更新包。命令只保存在宿主机，客户不能编辑或查看；默认不发布，启用后客户才看得到。</p></div><button class="btn ghost small" type="button" id="selfRefresh">刷新列表</button></div>
-        <form id="selfActionForm" class="form-grid">
-          <input type="hidden" id="selfEditId">
-          <label>适用思博商品<select id="selfProduct" required></select></label>
-          <label>客户显示顺序（数字越小越靠前）<input type="number" id="selfSortOrder" min="0" max="100000" value="100"></label>
-          <label>操作名称<input id="selfLabel" required maxlength="80" placeholder="例如：重启 SnowLuma"></label>
-          <label class="wide">客户可见说明<input id="selfDescription" maxlength="300" placeholder="例如：重启后应用将短暂断开，请勿重复点击"></label>
-          <label>执行类型<select id="selfKind"><option value="COMMAND">管理员预设命令</option><option value="SOFTWARE_UPDATE">软件更新包</option></select></label>
-          <label class="check-row"><input id="selfEnabled" type="checkbox"><span><b>允许客户执行</b><small>创建时默认关闭，管理员确认后再开启</small></span></label>
-          <div class="wide" id="selfCommandFields">
-            <div class="form-grid">
-              <label>命令环境<select id="selfShell"><option value="powershell">PowerShell</option><option value="cmd">CMD</option></select></label>
-              <label>运行方式<select id="selfRunMode"><option value="wait">等待结果</option><option value="detached">后台启动</option><option value="interactive">已登录用户桌面</option></select></label>
-              <label class="wide">管理员预设命令<textarea id="selfCommand" rows="3" maxlength="2000" spellcheck="false" placeholder="仅管理员填写，客户页面不显示"></textarea></label>
-              <label>工作目录（可留空）<input id="selfCwd" placeholder="例如 C:\dsh\SnowLuma-v2.4.2-win-x64"></label>
-              <label>等待秒数<input id="selfTimeout" type="number" min="5" max="300" value="60"></label>
+          <div class="biz-view" data-biz-view="actions">
+            <div class="biz-work-head"><div><h3>客户自助操作</h3><p>先选商品、配置操作，再决定是否对客户开放。异常任务在下方单独处理。</p></div><button class="btn ghost small" type="button" id="selfRefresh">↻ 刷新数据</button></div>
+            <div class="self-stats" aria-label="自助操作统计">
+              <div><span>已配置</span><strong id="selfTotalCount">0</strong></div>
+              <div><span>已启用</span><strong id="selfEnabledCount">0</strong></div>
+              <div><span>待人工核对</span><strong id="selfPendingCount">0</strong></div>
             </div>
-          </div>
-          <div class="wide" id="selfUpdateFields" hidden>
-            <div class="form-grid">
-              <label>已审核更新包<select id="selfPackage"></select></label>
-              <label>SnowLuma 目标目录（可留空）<input id="selfInstallDir" placeholder="C:\dsh\SnowLuma-v2.4.2-win-x64"></label>
+            <div class="self-layout">
+              <section class="panel biz-panel self-catalog-panel" aria-labelledby="selfCatalogTitle">
+                <div class="self-section-head"><div><h2 id="selfCatalogTitle">已配置操作</h2><p>点击编辑可修改规则，启用后客户才看得到。</p></div></div>
+                <div class="self-filter-row">
+                  <input type="search" id="selfActionSearch" aria-label="搜索操作名称或商品" placeholder="搜索名称或商品…">
+                  <select id="selfActionFilter" aria-label="按启用状态筛选"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">未启用</option></select>
+                </div>
+                <div id="selfActionList" class="self-action-list" aria-live="polite"></div>
+              </section>
+              <section class="panel biz-panel self-editor-panel" aria-labelledby="selfEditorTitle">
+                <div class="self-section-head"><div><h2 id="selfEditorTitle">操作配置</h2><p id="selfEditorMode">新建一项客户可执行操作</p></div><span class="self-editor-tag">管理员专属</span></div>
+                <form id="selfActionForm" class="self-form">
+                  <input type="hidden" id="selfEditId">
+                  <div class="self-form-section"><div class="self-step"><b>01</b><span>基本信息</span></div>
+                    <div class="form-grid">
+                      <label>适用商品<select id="selfProduct" required></select></label>
+                      <label>客户显示顺序<input type="number" id="selfSortOrder" min="0" max="100000" value="100"></label>
+                      <label class="wide">操作名称<input id="selfLabel" required maxlength="80" placeholder="如：重启 SnowLuma"></label>
+                      <label class="wide">客户可见说明<input id="selfDescription" maxlength="300" placeholder="简要说明操作用途与注意事项"></label>
+                    </div>
+                  </div>
+                  <div class="self-form-section"><div class="self-step"><b>02</b><span>执行设置</span></div>
+                    <div class="form-grid">
+                      <label>执行类型<select id="selfKind"><option value="COMMAND">预设命令</option><option value="SOFTWARE_UPDATE">软件更新包</option></select></label>
+                      <label class="check-row self-enable-row"><input id="selfEnabled" type="checkbox"><span><b>对客户开放</b><small>新建默认关闭；启用前须确认命令内容</small></span></label>
+                      <div class="wide self-kind-fields" id="selfCommandFields">
+                        <div class="form-grid">
+                          <label>命令环境<select id="selfShell"><option value="powershell">PowerShell</option><option value="cmd">CMD</option></select></label>
+                          <label>运行方式<select id="selfRunMode"><option value="wait">等待结果</option><option value="detached">后台启动</option><option value="interactive">已登录用户桌面</option></select></label>
+                          <label class="wide">管理员预设命令<textarea id="selfCommand" rows="3" maxlength="2000" spellcheck="false" placeholder="客户无法查看或修改此命令"></textarea></label>
+                          <label>工作目录（可选）<input id="selfCwd" placeholder="例如 C:\dsh\SnowLuma"></label>
+                          <label>最长等待（秒）<input id="selfTimeout" type="number" min="5" max="300" value="60"></label>
+                        </div>
+                      </div>
+                      <div class="wide self-kind-fields" id="selfUpdateFields" hidden>
+                        <div class="form-grid">
+                          <label>已审核更新包<select id="selfPackage"></select></label>
+                          <label>SnowLuma 安装目录（可选）<input id="selfInstallDir" placeholder="例如 C:\dsh\SnowLuma"></label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="self-safety-tip">安全提示：命令和更新包由管理员配置，客户只可触发执行。请勿填写密码、Token 或危险的不可撤销命令。</p>
+                  <div class="self-form-footer"><button class="btn primary" id="selfSave" type="submit">保存操作</button><button class="btn ghost" type="button" id="selfReset">清空并新建</button></div>
+                </form>
+              </section>
             </div>
-          </div>
-          <p class="muted wide">安全说明：客户点击会触发宿主机已批准的高权限操作。不要在命令中包含密码、Token 或不可撤销的危险动作。更新包需先在「软件更新」上传审核。</p>
-          <div class="form-submit"><button class="btn primary" type="submit">保存自助操作</button><button class="btn ghost" type="button" id="selfReset">新建另一项</button></div>
-        </form><div id="selfActionList" class="template-list"></div>
-        <hr><h3>客户自助任务 · 异常处理</h3>
-        <p class="muted">执行结果未知或版本待核验时，必须先由管理员检查客户机进程及日志，再手动解除阻塞；不会自动重试原任务。</p>
-        <div id="selfExecutionList" class="template-list"></div>
-      </section>
+            <section class="panel biz-panel self-executions-panel" aria-labelledby="selfTasksTitle">
+              <div class="self-section-head"><div><h2 id="selfTasksTitle">客户执行任务</h2><p>执行结果不确定时可核对客户机日志并标记已核对；此状态只用于记录，不影响客户再次发起操作。正在执行中的任务仍受防重保护。</p></div></div>
+              <div id="selfExecutionList" class="self-execution-list" aria-live="polite"></div>
+            </section>
           </div>
           <div class="biz-view" data-biz-view="settings"><div class="biz-work-head"><div><h3>公告与客户额度</h3><p>统一管理通知展示频率、默认配额及单独客户限额。</p></div></div>
 <section class="panel biz-panel"><div class="panel-head"><div><h2>客户公告与使用额度</h2><p>公告默认每24小时展示；每次发布新公告，所有客户下次打开时至少展示一次。使用额度按北京时间自然月计算。</p></div></div>
         <form id="customerAnnouncementForm" class="form-grid">
-          <label class="wide">公告正文<textarea id="customerAnnouncementBody" maxlength="4000" rows="4"></textarea></label>
+          <label class="wide">公告正文<textarea id="customerAnnouncementBody" maxlength="4000" rows="6" placeholder="输入公告内容，按 Enter 换行，发布后客户将看到相同段落格式。"></textarea><small class="announcement-hint">支持换行、空行与分段，按实际输入格式发布。</small><span class="announcement-preview"><strong>客户展示预览</strong><span id="customerAnnouncementPreview">公告内容将显示在这里</span></span></label>
           <label>重复提醒间隔（小时）<input id="customerAnnouncementHours" type="number" min="1" max="720" value="24"></label>
           <label class="check-row"><input type="checkbox" id="customerAnnouncementEnabled"><span><b>发布并启用公告</b></span></label>
           <div class="form-submit"><button class="btn primary" type="submit">保存并发布新公告</button></div>

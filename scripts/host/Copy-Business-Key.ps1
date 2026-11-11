@@ -1,4 +1,4 @@
-﻿# Windows Host only. Run with same user as Start-VM-Orchestrator.cmd.
+# Windows Host only. Run with same user as Start-VM-Orchestrator.cmd.
 $ErrorActionPreference = 'Stop'
 $path = Join-Path $env:LOCALAPPDATA 'VM-Orchestrator\business-key.txt'
 if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {

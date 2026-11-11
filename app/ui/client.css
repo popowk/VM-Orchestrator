@@ -16,3 +16,34 @@
 .vmo-secret-actions button:first-child{background:#225dc1;color:#fff;border-color:#225dc1}.vmo-secret-card small{min-height:18px;color:#1f6b3e}
 
 .vmo-announcement-overlay:not([hidden]){position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:20px}.vmo-announcement-box{background:var(--surface,#fff);color:var(--text,#222);width:min(600px,100%);max-height:80vh;overflow:auto;border-radius:12px;padding:24px;box-shadow:0 12px 40px rgba(0,0,0,.25)}.vmo-announcement-box button{margin-top:18px}#selfActionSelect{min-width:220px;max-width:100%;flex:1}
+
+/* v1.4.36 · roomier customer portal and self-service controls */
+.wrapper{max-width:1440px;padding:28px 30px}
+.panel,.summary{padding:27px 29px;border-radius:16px}
+.cols{grid-template-columns:minmax(0,1.13fr) minmax(0,1fr);gap:20px}
+.self-service-panel{min-height:325px}
+.self-service-panel h3{font-size:17px}
+.self-service-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;margin:19px 0 12px;align-items:stretch}
+.self-service-controls select{height:48px;width:100%;min-width:0;background:#fff;border:1px solid #ccd8eb;border-radius:10px;color:#23446c;font-size:14px;padding:10px 13px}
+.self-service-controls button{min-width:122px;min-height:48px;font-weight:700}
+.self-action-description{margin:0;min-height:33px;font-size:12px;line-height:1.7}
+.self-service-panel .divider{margin:18px 0}
+.self-service-panel #selfHistory{margin-top:8px}
+.self-service-panel #selfHistory .item{padding:12px 14px}
+.vmo-announcement-box{width:min(760px,100%);border-radius:18px;padding:34px;max-height:85vh}
+.vmo-secret-card{width:min(680px,100%);border-radius:18px;padding:28px}
+.app-viewer iframe{height:min(82vh,950px);min-height:600px}
+@media(max-width:1000px){.cols{grid-template-columns:1fr}.wrapper{padding:20px}.self-service-panel{min-height:auto}}
+@media(max-width:600px){.wrapper{padding:12px}.panel,.summary{padding:18px}.self-service-controls{grid-template-columns:1fr}.self-service-controls button{width:100%}.vmo-announcement-box{padding:24px}.vmo-secret-card{padding:22px}.app-viewer iframe{min-height:450px}}
+
+/* Compact five-row execution histories; review status is informational only. */
+.record-item{gap:12px;align-items:center;min-width:0;padding:12px 14px}
+.record-body{display:grid;gap:3px;min-width:0;flex:1}
+.record-name{display:block;font-size:13px;font-weight:700;color:#273d5e;overflow-wrap:anywhere}
+.record-time{display:block;color:#8997aa;font-size:11px;font-variant-numeric:tabular-nums;line-height:1.5}
+.record-reason{display:block;color:#ba5d39;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
+.record-state{flex:none;display:inline-flex;align-items:center;justify-content:center;padding:5px 9px;border-radius:7px;background:#edf3fc;color:#426087;white-space:nowrap;font-size:11px;font-weight:690}
+.record-state.success{color:#287052;background:#e9f6ee}
+.record-state.failed{color:#a54249;background:#fff0f0}
+.record-state.review{color:#9b641d;background:#fff5e4}
+@media(max-width:420px){.record-item{align-items:start}.record-state{font-size:10px;padding:4px 7px}.record-name{font-size:12px}}

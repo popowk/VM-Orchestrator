@@ -400,7 +400,7 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
 
     db = BusinessDb(settings.db_path)
     remote = RemoteStore(settings.db_path)
-    self_actions = SelfServiceStore(settings.db_path)
+    self_actions = SelfServiceStore(settings.db_path,remote_store=remote)
     customer_settings = CustomerSettings(settings.db_path)
     portal_dir = Path(__file__).parent / 'ui'
     business_key = os.environ.get('VMO_BUSINESS_KEY', '')
@@ -460,11 +460,35 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
             raise HTTPException(409, 'Service VM not available')
         return v
 
+    def reinstall_source(s):
+        """Resolve only a template already assigned to this service/product.
+
+        An existing service keeps its original template when it is still usable.
+        If that original was archived, removed or lost from disk, the only
+        fallback is the *current mapping of the same product*. Never use the
+        global default template or a template supplied by the browser.
+        """
+        original = store.get(s['template_id'])
+        if (original and original['status'] == 'SEALED_ATTESTED'
+                and Path(original['vmx_path']).is_file()):
+            return original, False
+        product = db.product(s['product_ref'])
+        replacement = store.get(product['template_id']) if product else None
+        if (replacement and replacement['status'] == 'SEALED_ATTESTED'
+                and Path(replacement['vmx_path']).is_file()):
+            return replacement, replacement['id'] != s['template_id']
+        raise HTTPException(409, '当前套餐的系统模板已失效，请联系管理员在「商品与模板」中重新绑定有效且已封存的黄金模板')
+
     def safe_vm_status(s):
         v = get_owned_vm(s)
         data = vm_detail(v, running_set())
         g = next((g for g in fleet.guests() if g['vm_id'] == v['id'] and not g.get('revoked_at')), None)
         jobs = store.list_jobs(v['id'])
+        try:
+            reinstall_source(s)
+            can_reinstall = True
+        except HTTPException:
+            can_reinstall = False
         return {
             'service_ref': s['service_ref'], 'name': v['name'],
             'status': s['status'], 'expires_at':s.get('expires_at'),
@@ -475,6 +499,7 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
             'guest_install_modes': (g.get('reported') or {}).get('install_modes', {}) if g else {},
             'latest_job': ({k: jobs[0].get(k) for k in ('id','action','status')} if jobs else None),
             'allow_updates': bool((db.product(s['product_ref']) or {}).get('allow_updates')),
+            'reinstall_template_available': can_reinstall,
         }
 
     @app.get('/client', include_in_schema=False)
@@ -484,11 +509,11 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
 
     @app.get('/ui/client.css', include_in_schema=False)
     def client_css():
-        return FileResponse(portal_dir / 'client.css', media_type='text/css; charset=utf-8')
+        return FileResponse(portal_dir / 'client.css', media_type='text/css; charset=utf-8', headers={'Cache-Control':'no-store'})
 
     @app.get('/ui/client.js', include_in_schema=False)
     def client_js():
-        return FileResponse(portal_dir / 'client.js', media_type='text/javascript; charset=utf-8')
+        return FileResponse(portal_dir / 'client.js', media_type='text/javascript; charset=utf-8', headers={'Cache-Control':'no-store'})
 
 
     @app.post('/client/exchange', include_in_schema=False)
@@ -576,7 +601,7 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
     def client_jobs(s=Depends(client_service)):
         # No VMX path, template ID or other customers' job metadata.
         return [{k: j.get(k) for k in ('id', 'action', 'status', 'created_at', 'completed_at')}
-                for j in store.list_jobs(s['vm_id'])[:15]]
+                for j in store.list_jobs(s['vm_id'],limit=5)]
 
     @app.get('/client/api/snapshots', include_in_schema=False)
     def client_snapshots(s=Depends(client_service)):
@@ -609,6 +634,9 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
         history=[]
         for row in records:
             visible={k:row.get(k) for k in ('request_id','action_id','status','created_at','updated_at')}
+            # Never expose the actual command, directory, tokens or package path.
+            action=self_actions.get(row['action_id']) if not row.get('action_label') else None
+            visible['label']=row.get('action_label') or (action or {}).get('label') or '已删除的自助操作' 
             if row['action_kind']=='COMMAND' and row.get('operation_id'):
                 # Only publish the execution category, not the command, output,
                 # tokens, working directory or full remote operation metadata.
@@ -623,7 +651,12 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
                         elif isinstance(result.get('exit_code'),int):visible['failure_reason']='命令退出码 '+str(result['exit_code'])
                         else:visible['failure_reason']='Guest 返回执行失败'
             history.append(visible)
-        return history
+        blocking=self_actions.blocking_execution(s['service_ref'],s['vm_id'])
+        # The blocker is independent from the five most recent entries.
+        return {'items':history,'blocker':({
+            'status':blocking['status'],
+            'label':blocking.get('action_label') or '之前的自助操作'
+        } if blocking else None)}
 
     @app.post('/client/api/self-actions/{action_id}/execute', include_in_schema=False,status_code=202)
     def client_execute_self_action(action_id:str,payload:ExecuteInput,s=Depends(client_service)):
@@ -644,6 +677,7 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
             # Reconcile durable results before checking duplicate execution.
             self_actions.reconcile(s['service_ref'],v['id'])
             try:record,created=self_actions.reserve(s['service_ref'],v['id'],a['id'],a['kind'],payload.request_id)
+            except LookupError as exc:raise HTTPException(404,str(exc))
             except (ValueError,RuntimeError) as exc:raise HTTPException(409,str(exc))
             if not created:
                 return {'request_id':record['request_id'],'status':record['status'],
@@ -731,18 +765,21 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
             elif payload.action == 'reinstall':
                 if not payload.confirm or payload.confirm_name != v['name']:
                     raise HTTPException(422, 'Reinstall requires exact VM name confirmation')
-                t = store.get(s['template_id'])
-                if not t or t['status'] != 'SEALED_ATTESTED':
-                    raise HTTPException(409, 'Assigned product template is no longer available')
+                t, remapped = reinstall_source(s)
                 try:quota_month=customer_settings.reserve(s['service_ref'],'reinstall')
                 except ValueError as exc:raise HTTPException(429,str(exc))
                 try:result = reinstall_vm(vm_id, ReinstallVmRequest(
-                    template_id=s['template_id'], unattended_oobe=t.get('oobe_bootstrap_version',0)>=2,
+                    template_id=t['id'], unattended_oobe=t.get('oobe_bootstrap_version',0)>=2,
                     enable_screen=True, confirm_name=v['name'],
                     confirm_erase_customer_data=True, confirm_backup_disk_space=True))
                 except Exception:
                     customer_settings.release(s['service_ref'],'reinstall',quota_month)
                     raise
+                if remapped:
+                    # Preserve original service/template history. Record that
+                    # the currently approved product mapping was used instead.
+                    db.audit(s['service_ref'], 'REINSTALL_TEMPLATE_FALLBACK',
+                             'product='+s['product_ref']+' template='+t['id'])
             else:  # software_update
                 p = db.product(s['product_ref'])
                 if not p or not p['allow_updates']:
@@ -874,11 +911,15 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
         if payload.get('reviewed_guest_state') is not True:
             raise HTTPException(422,'Confirm that Guest process and logs have been inspected')
         try:
+            with self_actions.db() as connection:
+                entry=connection.execute('SELECT service_ref,vm_id FROM business_self_executions WHERE request_id=?',(request_id,)).fetchone()
+            if not entry:raise LookupError('Execution record not found')
+            self_actions.reconcile(entry['service_ref'],entry['vm_id'])
             original=self_actions.acknowledge(request_id)
         except LookupError:raise HTTPException(404,'Execution record not found')
         except ValueError as exc:raise HTTPException(409,str(exc))
         db.audit(original['service_ref'],'SELF_ACTION_MANUAL_REVIEW',original['action_kind'])
-        return {'status':'ACKNOWLEDGED','note':'Previous task was not retried'}
+        return {'status':'ACKNOWLEDGED','note':'Review recorded; no customer-operation restriction was applied'}
 
     @app.get('/api/business/admin/self-actions', dependencies=[Depends(authorized)])
     def admin_self_actions():

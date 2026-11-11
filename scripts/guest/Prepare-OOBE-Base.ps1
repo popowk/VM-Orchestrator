@@ -1,4 +1,4 @@
-﻿# Run ONLY in a new template BUILD COPY prior to Sysprep. No passwords/tenant identity.
+# Run ONLY in a new template BUILD COPY prior to Sysprep. No passwords/tenant identity.
 # This automates Windows 10 regional/privacy OOBE pages; account creation remains interactive.
 param([string]$Output = 'C:\TemplateTools\unattend.xml')
 $ErrorActionPreference = 'Stop'

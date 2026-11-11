@@ -1,5 +1,5 @@
 'use strict';
-const bjtTime = value => new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(value))+' (北京时间)';
+const bjtTime = (value,withZone=true) => {const d=new Date(value);if(Number.isNaN(d.getTime()))return '时间未知';return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(d)+(withZone?' (北京时间)':'');};
 const $ = id=>document.getElementById(id);
 let csrf='', current=null, pending=false, appSignature='', activeApp='', selfActionSignature='', selfHistorySignature='';
 let selfActionCatalog=[], displayedAnnouncement=null;
@@ -54,7 +54,7 @@ async function refresh(){
  $('vmstate').textContent=({READY:'已就绪',CREATING:'克隆中',ERROR:'异常',REINSTALLING:'重装中'})[m.vm_state]||m.vm_state;
  $('guest').textContent=m.guest_registered?'已注册':'未注册';
  const off=m.power_state==='POWERED_OFF'&&m.vm_state==='READY',on=m.power_state==='POWERED_ON'&&m.vm_state==='READY';
- $('start').disabled=!off;$('stop').disabled=!on;$('hard').disabled=!on;$('reinstall').disabled=!off || (m.usage&&m.limits&&m.usage.reinstall_used>=m.limits.monthly_reinstall_limit);
+ $('start').disabled=!off;$('stop').disabled=!on;$('hard').disabled=!on;$('reinstall').disabled=!off || m.reinstall_template_available===false || (m.usage&&m.limits&&m.usage.reinstall_used>=m.limits.monthly_reinstall_limit);$('reinstall').title=m.reinstall_template_available===false?'套餐系统模板已失效，请联系管理员检查商品与模板绑定':'';
  $('snapCreate').disabled=!off;
  // Optional panels fail independently. Do not destroy the app iframe or other controls.
  const panels=await Promise.allSettled([req('snapshots'),req('self-actions'),req('apps'),req('jobs'),req('self-actions/history')]);
@@ -72,48 +72,90 @@ async function refresh(){
  if(panels[2].status==='fulfilled')renderApps(panels[2].value);
  else failures.push('应用：'+panels[2].reason.message);
  if(panels[3].status==='fulfilled'){
-   const jobs=panels[3].value;$('jobs').replaceChildren();for(const j of jobs){const row=element('div','','item');row.append(element('span',j.action+' · '+j.status+' · '+(j.completed_at?'完成：':'提交：')+bjtTime(j.completed_at||j.created_at)));$('jobs').append(row);}if(!jobs.length)$('jobs').append(element('p','暂无任务记录','muted'));
+   renderRecentJobs(panels[3].value);
  }else failures.push('任务：'+panels[3].reason.message);
  if(panels[4].status==='fulfilled')renderSelfHistory(panels[4].value);
  else failures.push('自助记录：'+panels[4].reason.message);
  if(failures.length)show('部分模块暂不可用（不影响其他模块）：'+failures.join('；'),true);
  else {$('notice').textContent='';$('notice').className='notice';}
 }
+const selfStatuses={RESERVING:'正在下发',QUEUED:'已排队',CLAIMED:'已接收',RUNNING:'执行中',SUCCEEDED:'成功',FAILED:'失败',TIMED_OUT:'结果待核对',UNKNOWN:'结果待核对',VERIFY_REQUIRED:'结果待核对',ACKNOWLEDGED:'管理员已核对',CANCELLED:'任务已取消'};
+const jobNames={START:'开机',STOP:'关闭虚拟机',CLONE_FULL:'创建云主机',REINSTALL_FROM_TEMPLATE:'重装 Windows 系统',SNAPSHOT_CREATE:'创建快照',SNAPSHOT_RESTORE:'恢复快照',SNAPSHOT_DELETE:'删除快照',ACCEPTANCE_TEST:'验收检查',UNATTEND_CLEANUP:'初始化清理',REPAIR_CLONE_IDENTITY:'修复 Windows 身份',FIRSTBOOT_START:'初始化开机',DELETE_VM:'删除云主机'};
+const jobStatuses={QUEUED:'排队中',RUNNING:'执行中',SUCCEEDED:'已完成',FAILED:'失败',CANCELLED:'已取消',PENDING:'待处理'};
+function freshRequestId(){
+ if(typeof crypto!=='undefined'&&typeof crypto.randomUUID==='function')return crypto.randomUUID();
+ if(typeof crypto!=='undefined'&&typeof crypto.getRandomValues==='function'){
+  const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);
+  bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+  const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+  return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+ }
+ throw Error('此浏览器不支持安全随机数，请通过 HTTPS 页面访问');
+}
+function renderRecentJobs(jobs){
+ const node=$('jobs');node.replaceChildren();
+ for(const j of (Array.isArray(jobs)?jobs:[]).slice(0,5)){
+  const row=element('div','','item record-item');
+  const body=element('div','','record-body');
+  body.append(element('strong',jobNames[j.action]||j.action||'虚拟机任务','record-name'),element('small',(j.completed_at?'完成：':'提交：')+bjtTime(j.completed_at||j.created_at,false),'record-time'));
+  row.append(body,element('span',jobStatuses[j.status]||j.status||'未知','record-state '+(j.status==='SUCCEEDED'?'success':j.status==='FAILED'?'failed':'')));
+  node.append(row);
+ }
+ if(!node.childElementCount)node.append(element('p','暂无任务记录','muted'));
+}
+function updateSelfActionControl(){
+ const selected=selfActionCatalog.find(a=>a.id===$('selfActionSelect').value);
+ $('selfActionDescription').textContent=selected?(selected.description||'管理员预设的快捷操作'):(selfActionCatalog.length?'请选择要执行的操作':'当前商品没有已授权的自助操作，请联系管理员');
+ const button=$('selfActionExecute');
+ button.disabled=!selected||pending;
+ button.textContent='执行操作';
+ button.title='';
+}
 async function executeSelfAction(a){
  if(pending)return;
  if(!confirm('确定执行「'+a.label+'」？\n'+(a.description||'请确认你了解此操作的影响。')+'\n\n提交后无法撤销，执行过程中请不要重复点击。'))return;
- pending=true;
+ pending=true;updateSelfActionControl();
  try{
-  const id=crypto.randomUUID();
+  const id=freshRequestId();
   const result=await req('self-actions/'+encodeURIComponent(a.id)+'/execute','POST',{request_id:id,confirm:true});
   show('自助操作已提交：'+a.label+'（'+result.status+'）。请查看下方任务记录。');
   await refreshSelfHistory();
- }catch(e){show('自助操作失败：'+e.message,true);}
- finally{pending=false;}
+ }catch(e){show('自助操作失败：'+e.message,true);await refreshSelfHistory();}
+ finally{pending=false;updateSelfActionControl();}
 }
 function renderSelfActions(items){
- const sig=JSON.stringify(items.map(a=>[a.id,a.label,a.description,a.kind,a.sort_order,a.updated_at]));
- if(selfActionSignature===sig)return;
- selfActionSignature=sig;selfActionCatalog=items;
- const select=$('selfActionSelect'),before=select.value;
- select.replaceChildren(new Option('选择自助操作',''));
- for(const a of items)select.add(new Option(a.label+(a.kind==='SOFTWARE_UPDATE'?' · 软件更新':''),a.id));
- if(items.some(a=>a.id===before))select.value=before;
- const changed=()=>{const a=selfActionCatalog.find(a=>a.id===select.value);$('selfActionDescription').textContent=a?(a.description||'管理员预设的快捷操作'):'管理员尚未选择操作';$('selfActionExecute').disabled=!a;};
- select.onchange=changed;changed();
-}
-function renderSelfHistory(items){
- const sig=JSON.stringify(items.map(a=>[a.request_id,a.status,a.updated_at,a.outcome,a.failure_reason]));
- if(selfHistorySignature===sig)return;
- selfHistorySignature=sig;const target=$('selfHistory');target.replaceChildren();
- const labels={RESERVING:'正在下发',QUEUED:'已排队',CLAIMED:'已接收',RUNNING:'执行中',SUCCEEDED:'成功',FAILED:'失败',TIMED_OUT:'结果未知',UNKNOWN:'结果未知',VERIFY_REQUIRED:'已执行，待核验'};
- for(const a of items.slice(0,5)){const row=element('div','','item');
-   const label=a.status==='SUCCEEDED'&&a.outcome==='START_ACCEPTED'?'已启动':(labels[a.status]||a.status);
-   const suffix=a.failure_reason?' · '+a.failure_reason:'';
-   row.append(element('span',label+' · '+bjtTime(a.updated_at||a.created_at)+suffix));
-   target.append(row);
+ const list=Array.isArray(items)?items:[];
+ const sig=JSON.stringify(list.map(a=>[a.id,a.label,a.description,a.kind,a.sort_order,a.updated_at]));
+ if(selfActionSignature!==sig){
+  selfActionSignature=sig;selfActionCatalog=list;
+  const select=$('selfActionSelect'),before=select.value;
+  select.replaceChildren(new Option('请选择自助操作',''));
+  for(const a of list)select.add(new Option(a.label+(a.kind==='SOFTWARE_UPDATE'?' · 软件更新':''),a.id));
+  if(list.some(a=>a.id===before))select.value=before;
+  else if(list.length)select.value=list[0].id;
+  select.onchange=updateSelfActionControl;
  }
- if(!items.length)target.append(element('p','暂无自助操作记录。','muted'));
+ updateSelfActionControl();
+}
+function renderSelfHistory(payload){
+ const items=Array.isArray(payload)?payload:(Array.isArray(payload?.items)?payload.items:[]);
+ updateSelfActionControl();
+ const list=items.slice(0,5);
+ const sig=JSON.stringify(list.map(a=>[a.request_id,a.label,a.status,a.updated_at,a.outcome,a.failure_reason]));
+ if(selfHistorySignature===sig)return;
+ selfHistorySignature=sig;
+ const target=$('selfHistory');target.replaceChildren();
+ for(const a of list){
+  const row=element('div','','item record-item');
+  const title=a.label||selfActionCatalog.find(x=>x.id===a.action_id)?.label||'历史自助操作';
+  const body=element('div','','record-body');
+  body.append(element('strong',title,'record-name'),element('small',bjtTime(a.updated_at||a.created_at,false),'record-time'));
+  if(a.failure_reason)body.append(element('small',a.failure_reason,'record-reason'));
+  const label=a.status==='SUCCEEDED'&&a.outcome==='START_ACCEPTED'?'已启动':(selfStatuses[a.status]||a.status||'未知');
+  row.append(body,element('span',label,'record-state '+(a.status==='SUCCEEDED'?'success':a.status==='FAILED'?'failed':(['UNKNOWN','TIMED_OUT','VERIFY_REQUIRED'].includes(a.status)?'review':''))));
+  target.append(row);
+ }
+ if(!list.length)target.append(element('p','暂无自助操作记录。','muted'));
 }
 async function checkCustomerAnnouncement(){
  if(document.hidden)return;
@@ -185,13 +227,10 @@ async function refreshLive(){
    $('vmstate').textContent=({READY:'已就绪',CREATING:'克隆中',ERROR:'异常'})[m.vm_state]||m.vm_state;
    $('guest').textContent=m.guest_registered?'已注册':'未注册';
    const off=m.power_state==='POWERED_OFF'&&m.vm_state==='READY',on=m.power_state==='POWERED_ON'&&m.vm_state==='READY';
-   $('start').disabled=!off;$('stop').disabled=!on;$('hard').disabled=!on;$('reinstall').disabled=!off || (m.usage&&m.limits&&m.usage.reinstall_used>=m.limits.monthly_reinstall_limit);
+   $('start').disabled=!off;$('stop').disabled=!on;$('hard').disabled=!on;$('reinstall').disabled=!off || m.reinstall_template_available===false || (m.usage&&m.limits&&m.usage.reinstall_used>=m.limits.monthly_reinstall_limit);$('reinstall').title=m.reinstall_template_available===false?'套餐系统模板已失效，请联系管理员检查商品与模板绑定':'';
    const jobs=await req('jobs');const node=$('jobs');
-   const sig=JSON.stringify(jobs.map(j=>[j.id,j.status,j.created_at,j.completed_at]));
-   if(node.dataset.signature!==sig){node.dataset.signature=sig;node.replaceChildren();
-     for(const j of jobs){const row=element('div','','item');row.append(element('span',j.action+' · '+j.status+' · '+(j.completed_at?'完成：':'提交：')+bjtTime(j.completed_at||j.created_at)));node.append(row);}
-     if(!jobs.length)node.append(element('p','暂无任务记录','muted'));
-   }
+   const sig=JSON.stringify(jobs.slice(0,5).map(j=>[j.id,j.action,j.status,j.created_at,j.completed_at]));
+   if(node.dataset.signature!==sig){node.dataset.signature=sig;renderRecentJobs(jobs);}
    await refreshSelfHistory();
  }catch(e){show('状态刷新失败：'+e.message,true);}
 }

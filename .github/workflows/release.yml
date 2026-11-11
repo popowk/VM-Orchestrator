@@ -1,13 +1,14 @@
-name: Publish a verified VMO release
+name: Publish verified VMO release
 on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: vmo-release-main
+  cancel-in-progress: false
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -15,32 +16,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Verify release version
+      - name: Verify semantic version
         shell: bash
         run: |
           set -euo pipefail
-          v=$(cat VERSION | tr -d '\r\n')
+          v=$(tr -d '\r\n' < VERSION)
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            test "v$v" = "$GITHUB_REF_NAME"
-          fi
-      - name: Build release artifact and SHA-256 checksum
+      - name: Build release ZIP and SHA-256
         run: python tools/build_release.py
-      - name: Publish release once
+      - name: Publish only a new release version
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          v=$(cat VERSION | tr -d '\r\n')
+          v=$(tr -d '\r\n' < VERSION)
           if gh release view "v${v}" >/dev/null 2>&1; then
-            echo "Release v${v} already exists; leaving it unchanged."
+            echo "Release v${v} already exists; keeping published artifacts unchanged."
             exit 0
           fi
-          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
-            gh release create "v${v}" "dist/VM-Orchestrator-v${v}.zip" "dist/VM-Orchestrator-v${v}.zip.sha256" \
-              --target "$GITHUB_SHA" --title "VM Orchestrator v${v}" --generate-notes
-          else
-            gh release create "v${v}" "dist/VM-Orchestrator-v${v}.zip" "dist/VM-Orchestrator-v${v}.zip.sha256" \
-              --title "VM Orchestrator v${v}" --generate-notes --verify-tag
-          fi
+          gh release create "v${v}" "dist/VM-Orchestrator-v${v}.zip" "dist/VM-Orchestrator-v${v}.zip.sha256" \
+            --target "$GITHUB_SHA" --title "VM Orchestrator v${v}" --generate-notes
