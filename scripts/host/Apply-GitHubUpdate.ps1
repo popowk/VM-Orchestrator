@@ -36,6 +36,9 @@ function Write-State([string]$status,[string]$description) {
     $data = @{state=$status;version=$Version;attempt=$Attempt;mode='restart';pid=$PID;message=$description;
               at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')}
     if ($backupDir) { $data['backup'] = $backupDir }
+    if ($status -eq 'success' -and $script:VerifiedHostPid) {
+        $data['verified_host_pid'] = $script:VerifiedHostPid
+    }
     $json = $data | ConvertTo-Json -Compress -Depth 5
     $temp = $statePath + '.ps-' + $PID + '.tmp'
     [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false))
@@ -43,22 +46,38 @@ function Write-State([string]$status,[string]$description) {
     Log "$status : $description"
 }
 function Probe-Version([string]$needed,[int]$attempts=30) {
+    $stable = 0
+    $lastPid = 0
+    $script:VerifiedHostPid = 0
     for ($i=0; $i -lt $attempts; $i++) {
         Start-Sleep -Seconds 3
         try {
             $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/health' -TimeoutSec 2 -ErrorAction Stop
-            $guestReady = @(Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue).Count -gt 0
-            $listener = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-            $freshPid = if ($listener) { [int]$listener.OwningProcess } else { 0 }
-            # Older release's /health response had no PID. On rollback we
-            # accept the previous service if its port is owned by a new PID.
+            $hostListener = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+            $guestListener = Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+            $freshPid = if ($hostListener) { [int]$hostListener.OwningProcess } else { 0 }
+            $guestPid = if ($guestListener) { [int]$guestListener.OwningProcess } else { 0 }
+            $diskVersion = (Get-Content -LiteralPath (Join-Path $Target 'VERSION') -Raw -ErrorAction Stop).Trim()
+            # All checks must be valid across three consecutive probes. An old
+            # service or a competing instance may briefly own a port.
             $pidMatches = (($needed -eq '') -or ($health.pid -and [int]$health.pid -eq $freshPid))
-            if ($health.status -eq 'ok' -and $guestReady -and $freshPid -gt 0 -and
-                $freshPid -ne $HostPid -and $pidMatches -and
-                (($needed -eq '') -or ($health.version -eq $needed))) {
-                return $true
+            $versionMatches = (($needed -eq '') -or
+                               ($health.version -eq $needed -and $diskVersion -eq $needed))
+            $healthy = ($health.status -eq 'ok' -and $freshPid -gt 0 -and
+                        $freshPid -ne $HostPid -and $guestPid -eq $freshPid -and
+                        $pidMatches -and $versionMatches)
+            if ($healthy) {
+                if ($freshPid -eq $lastPid) { $stable++ }
+                else { $lastPid = $freshPid; $stable = 1 }
+                if ($stable -ge 3) {
+                    $script:VerifiedHostPid = $freshPid
+                    return $true
+                }
+            } else {
+                $stable = 0
+                $lastPid = 0
             }
-        } catch { }
+        } catch { $stable = 0; $lastPid = 0 }
     }
     return $false
 }

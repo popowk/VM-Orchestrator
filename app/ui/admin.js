@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.46 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.47 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -1191,26 +1191,53 @@ window.VMOSelfService=(()=>{
    try{const data=await request('/api/system/update');show(data);}
    catch(e){setText('sysProgress','无法读取更新状态：'+e.message);}
  }
+ function isNewer(a,b){
+   const nums=v=>/^\d+\.\d+\.\d+$/.test(v)?v.split('.').map(Number):null;
+   const x=nums(String(a||'').replace(/^v/,'')),y=nums(String(b||'').replace(/^v/,''));
+   if(!x||!y)return false;
+   for(let i=0;i<3;i++){if(x[i]!==y[i])return x[i]>y[i];}
+   return false;
+ }
  function show(data){
-   setText('sysCurrentVersion','v'+data.current);setText('sysRepo',data.repository);
-   // After a backend restart, this tab can still be running the previous
-   // version's JS. Reload once to bind newly installed handlers and assets.
-   const loadedScript=document.querySelector('script[src*="/ui/admin.js"]');
-   const loadedVer=loadedScript?.getAttribute('src')?.match(/[?&]v=([0-9.]+)/)?.[1];
-   if(data.update?.state==='success' && loadedVer && data.current!==loadedVer){
-      setText('sysProgress','新版本已成功启动，正在刷新后台页面…');
-      window.location.reload();
-      return;
-   }
-   if(data.update?.state==='success'){
+   const running=String(data.current||'');
+   const disk=String(data.disk_version||'');
+   const target=String(data.update?.version||'');
+   const update=data.update||{};
+   const confirmed=(update.state==='success' && target===running &&
+      (!disk||disk===running) && (update.mode!=='restart'||
+       !data.started_version||data.started_version===running));
+   const mismatch=update.state==='version_mismatch'||
+      (update.state==='success'&&!confirmed);
+   const newest=String(data.latest||latest||'').replace(/^v/,'');
+   setText('sysCurrentVersion','v'+running);setText('sysRepo',data.repository);
+   if(mismatch){
+      available=false;
+      setText('sysAvailability','运行版本不一致');
+      setText('sysUpdateBadge','需要核查');
+   }else if(newest){
+      available=isNewer(newest,running);
+      setText('sysAvailability',available?'有新版本':'已是最新正式版');
+      setText('sysUpdateBadge',available?'可更新':confirmed?'更新成功':'已是最新');
+   }else if(confirmed){
       available=false;
       setText('sysAvailability','已安装');
       setText('sysUpdateBadge','更新成功');
    }
+   // A cached success status alone never justifies a page reload.
+   const loadedScript=document.querySelector('script[src*="/ui/admin.js"]');
+   const loadedVer=loadedScript?.getAttribute('src')?.match(/[?&]v=([0-9.]+)/)?.[1];
+   if(confirmed && loadedVer && running!==loadedVer){
+      setText('sysProgress','已确认新版本服务，正在刷新页面…');
+      window.location.reload();return;
+   }
    setText('sysAuth',data.configured_token?'已配置私有仓库令牌':'无令牌：只可访问公开的 Releases');
-   const update=data.update||{};
-   const names={idle:'未开始',downloading:'下载中',verified:'校验通过',handoff:'启动独立更新器',preparing:'独立更新器已启动',stopping:'停止旧版服务',backing_up:'备份旧版程序',applying:'正在替换程序',restarting:'重新启动',hot_applying:'页面热更新中',unconfirmed:'等待人工确认',success:'已完成',failed:'更新失败',rolled_back:'已回滚'};
-   setText('sysProgress',(names[update.state]||update.state||'未开始')+' · '+(update.mode==='hot'?'[免重启] ':update.mode==='restart'?'[安全重启] ':'')+(update.message||'等待操作'));
+   const names={idle:'未开始',downloading:'下载中',verified:'校验通过',handoff:'启动独立更新器',preparing:'独立更新器已启动',stopping:'停止旧版服务',backing_up:'备份旧版程序',applying:'正在替换程序',restarting:'重新启动',hot_applying:'页面热更新中',unconfirmed:'等待人工确认',version_mismatch:'版本不一致',success:'已完成',failed:'更新失败',rolled_back:'已回滚'};
+   setText('sysProgress',mismatch?
+      '更新记录与实际版本不符：运行 v'+running+' / 磁盘 v'+(disk||'未知')+
+      ' / 目标 v'+(target||'未知')+'。请核对安装路径，暂勿重复升级。':
+      (names[update.state]||update.state||'未开始')+' · '+
+      (update.mode==='hot'?'[免重启] ':update.mode==='restart'?'[安全重启] ':'')+
+      (update.message||'等待操作'));
    if(['downloading','verified','handoff','preparing','stopping','backing_up','applying','restarting','hot_applying'].includes(update.state)){
      busy=true;buttonState(); if(!timer)timer=setInterval(poll,2500);
    } else {

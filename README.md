@@ -1,4 +1,4 @@
-# VM Orchestrator — 功能总览（v1.4.46）
+# VM Orchestrator — 功能总览（v1.4.47）
 
 VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机运营管理系统。正式发布包仅包含运行程序与必要安装/运维脚本；此文件为唯一的产品说明。
 
@@ -44,7 +44,7 @@ VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机
 - 目前发布包的语法、HTTP 和模拟场景可测试，但实际 VMware Workstation、思博环境、Windows 服务重启与回滚仍需在目标机器验收。
 
 
-### Windows updater reliability (v1.4.46)
+### Windows updater reliability (v1.4.47)
 
 On Windows, the Host validates the copied updater using the local PowerShell
 parser, writes it as UTF-8 with BOM, then launches it with Unicode-safe
@@ -56,3 +56,14 @@ versions whose launcher is already failing should use the standalone
 ## Guest Agent V2-only
 
 New customer Windows guests install only the V2 automatic Windows service. The same V2 service securely enrolls with the VM-specific one-time token over the pinned HTTPS Guest Gateway, maintains WSS, and applies vetted per-VM Agent update packages with SHA-256 validation and rollback. The V1 polling agent, V1 installer, and V1 task are no longer shipped or supported. Existing enrolled V2 identities are retained during updates.
+
+
+## Verify system upgrades
+
+The update status now compares the currently serving Host version, the on-disk
+VERSION file and the requested release. A historical `success` entry does not
+prove that the intended process is serving requests. The detached updater
+checks ownership of both ports by the same new PID and verifies the live and
+disk versions across three consecutive probes before recording success.
+If those versions disagree, inspect the installed directory and process
+startup method before retrying. Static UI-only updates remain restart-free.

@@ -65,7 +65,7 @@ def _get(url: str, token: str, max_bytes: int, accept: str) -> bytes:
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != "api.github.com":
         raise UpdateError("更新请求只能连接 GitHub 官方 API")
-    headers = {"Accept": accept, "User-Agent": "VM-Orchestrator-Self-Updater/1.4.45",
+    headers = {"Accept": accept, "User-Agent": "VM-Orchestrator-Self-Updater/1.4.47",
                "X-GitHub-Api-Version": "2022-11-28"}
     if token:
         headers["Authorization"] = "Bearer " + token
@@ -122,15 +122,26 @@ class UpdateService:
                 details = {"state": "idle"}
         except (OSError, ValueError, TypeError):
             pass
-        # On a full update, an actual new server running the requested version
-        # is authoritative. The prior server's 90-second timeout must NEVER
-        # override this, even if its handoff state survived in status.json.
+        # A recorded 'success' is historical evidence, not proof of the
+        # currently serving Python process. Check all three versions on
+        # every read. A hot-only UI update may change self.current without
+        # restarting; a restart-mode update must have started new code.
+        try:
+            disk_version = (self.project_root / "VERSION").read_text(
+                encoding="utf-8-sig").strip()
+        except OSError:
+            disk_version = ""
         intended = str(details.get("version", ""))
-        if (details.get("state") in STATES and intended == self.started_version and
-                details.get("mode") == "restart" and
-                details.get("state") not in ("downloading", "verified", "hot_applying")):
-            details = {**details, "state": "success", "mode": "restart",
-                       "message": "新版本服务已启动并接管请求，升级成功"}
+        if details.get("state") == "success":
+            consistent = (bool(intended) and intended == self.current == disk_version
+                          and (details.get("mode") != "restart"
+                               or self.started_version == intended))
+            if not consistent:
+                details = {**details, "state": "version_mismatch",
+                           "message": ("更新记录显示成功，但版本不一致：运行 "
+                                       + self.current + "，磁盘 " + (disk_version or "未知")
+                                       + "，目标 " + (intended or "未知")
+                                       + "。请检查实际启动实例和安装目录，不要重复执行更新。")}
         elif details.get("state") == "handoff":
             try:
                 age = time.time() - self.status_file.stat().st_mtime
@@ -142,9 +153,10 @@ class UpdateService:
             except OSError:
                 pass
         details = {k: details.get(k) for k in
-                   ("state", "at", "version", "message", "backup", "pid", "mode", "attempt")
+                   ("state", "at", "version", "message", "backup", "pid", "mode", "attempt", "verified_host_pid")
                    if k in details}
-        return {"current": self.current, "repository": self.repo,
+        return {"current": self.current, "disk_version": disk_version,
+                "started_version": self.started_version, "repository": self.repo,
                 "configured_token": bool(self.token), "update": details,
                 "latest": (self._release or {}).get("tag_name")}
 
@@ -210,6 +222,8 @@ class UpdateService:
 
     def install(self, version: str):
         with self._lock:
+            if self.status().get("update", {}).get("state") == "version_mismatch":
+                raise UpdateError("运行与磁盘版本不一致，请先修复安装状态再重试")
             if self._state_active():
                 raise UpdateError("已经有一个更新正在进行")
             if _numbers(version) <= _numbers(self.current):

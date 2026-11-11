@@ -24,6 +24,56 @@ jobs:
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
       - name: Compile Python source before release
         run: python -m compileall -q app guest_agent
+      - name: Check admin JavaScript syntax
+        run: node --check app/ui/admin.js
+      - name: Regression test version consistency
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from app.system_updates import UpdateService, UpdateError
+
+          with TemporaryDirectory() as temp:
+              root = Path(temp)
+              (root / "VERSION").write_text("1.4.45\n", encoding="utf-8")
+              worker = UpdateService(root)
+              worker.work.mkdir(parents=True)
+              worker.status_file.write_text(json.dumps({
+                  "state": "success", "mode": "restart",
+                  "version": "1.4.46", "attempt": "a" * 32
+              }), encoding="utf-8")
+              assert worker.status()["update"]["state"] == "version_mismatch"
+              assert worker.status()["current"] == "1.4.45"
+              try:
+                  worker.install("1.4.47")
+                  raise AssertionError("Inconsistent installation allowed a new update")
+              except UpdateError:
+                  pass
+              (root / "VERSION").write_text("1.4.46\n", encoding="utf-8")
+              assert worker.status()["update"]["state"] == "version_mismatch"
+              restarted = UpdateService(root)
+              assert restarted.status()["update"]["state"] == "success"
+              assert restarted.status()["disk_version"] == "1.4.46"
+              (root / "VERSION").write_text("1.4.45\n", encoding="utf-8")
+              assert restarted.status()["update"]["state"] == "version_mismatch"
+
+          print("PASS: historical success cannot mask a stale running service")
+          PY
+      - name: Parse Windows PowerShell update script
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "scripts/host/Apply-GitHubUpdate.ps1", [ref]$tokens, [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host "PASS: PowerShell parser accepted updater"
       - name: Build release ZIP and SHA-256
         run: python tools/build_release.py
       - name: Publish only a new release version
