@@ -198,3 +198,23 @@
 .sys-release-notes{background:#fafbfe;border:1px solid #e8edf5;border-radius:10px;padding:15px;margin:14px 0 0;font:12px/1.7 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow-y:auto}
 .sys-feature-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}.sys-feature-grid div{border:1px solid #e8edf4;border-radius:10px;padding:14px}.sys-feature-grid b{font-size:13px}.sys-feature-grid p{font-size:12px;line-height:1.7;color:#7a8ba4;margin-bottom:0}
 @media(max-width:950px){.sys-version-grid{grid-template-columns:1fr}.sys-feature-grid{grid-template-columns:1fr}}@media(max-width:560px){.system-update-hero{padding:19px;display:block}.sys-safe-pill{display:inline-block;margin-top:14px}.system-update-hero h2{font-size:19px}}
+
+
+/* v1.4.51 - live host gauges (no animation that suggests fabricated samples). */
+.vmo-host-dashboard{padding-bottom:18px}
+.vmo-host-dashboard .panel-head{align-items:center}
+.vmo-gauges{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px}
+.vmo-gauge-card{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#f8faff;border:1px solid #e6ebf4;border-radius:15px;padding:19px 10px;min-width:0;min-height:228px}
+.vmo-gauge-ring{width:144px;height:144px;max-width:100%;aspect-ratio:1;border-radius:50%;background:conic-gradient(var(--gauge-color,#3869d7) 0 var(--gauge-fill,0%),#e5eaf3 var(--gauge-fill,0%) 100%);padding:13px;display:grid;place-items:center}
+.vmo-gauge-inner{width:100%;height:100%;border-radius:50%;background:#fff;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:5px;box-shadow:inset 0 0 0 1px #f0f2f7}
+.vmo-gauge-inner strong{font-size:27px;font-weight:770;color:#25395b;font-variant-numeric:tabular-nums}
+.vmo-gauge-inner small{font-size:12px;color:#7c8aa2}
+.vmo-gauge-description{font-size:11px;color:#6d7e97;text-align:center;line-height:1.6;overflow-wrap:anywhere}
+.vmo-network-card{gap:10px}.vmo-network-icon{width:62px;height:62px;border-radius:20px;background:#e6f6f1;color:#1c9d81;display:grid;place-items:center;font-size:32px}
+.vmo-network-title{font-size:14px;color:#344968}.vmo-network-value{font-size:20px;line-height:1.15;font-weight:730;color:#25395b;font-variant-numeric:tabular-nums}
+.vmo-host-resource-details{display:flex;flex-wrap:wrap;gap:10px 30px;margin-top:17px;color:#65768f;font-size:11px}
+.vmo-host-disk-row{display:flex;gap:10px;justify-content:space-between;align-items:center;min-width:0}
+.vmo-host-disk-row strong{color:#3e536e;white-space:nowrap}
+.vmo-command-error{margin:10px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 Consolas,monospace;background:#fff3f1;color:#a53b42;border:1px solid #f5d7d7;border-radius:8px;padding:10px 12px}
+@media(max-width:1080px){.vmo-gauges{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.vmo-gauges{gap:8px}.vmo-gauge-card{min-height:175px;padding:12px 5px}.vmo-gauge-ring{width:115px;height:115px;padding:10px}.vmo-gauge-inner strong{font-size:22px}.vmo-network-value{font-size:16px}.vmo-host-resource-details{display:grid;gap:12px}}
