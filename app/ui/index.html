@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<script src="/ui/app-route-recover.js?v=1.4.38"></script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>VM Orchestrator · 本地管理控制台</title>
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.38">
+
+
+
+
+
+<script src="/ui/admin.js?v=1.4.38" defer></script>
+</head>
+<body>
+<div class="shell" id="adminShell" hidden>
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-icon">V</div><div><b>VM Orchestrator</b><small>Workstation Pro · Host Agent</small></div></div>
+    <nav aria-label="主导航">
+      <button class="nav-item active" data-page="overview">▦ <span>概览</span></button>
+      <button class="nav-item" data-page="vms">▤ <span>虚拟机</span></button>
+      <button class="nav-item" data-page="templates">▣ <span>黄金模板</span></button>
+      <button class="nav-item" data-page="updates">⬆ <span>软件更新</span></button>
+      <button class="nav-item" data-page="remote">⌘ <span>远程运维</span></button>
+      <button class="nav-item" data-page="jobs">◷ <span>任务记录</span></button>
+      <button class="nav-item" data-page="clients">♙ <span>思博客户服务</span></button>
+      <button class="nav-item" data-page="system">↻ <span>系统更新</span></button>
+    </nav>
+    <div class="sidebar-foot"><span class="dot" id="hostDot"></span> <span id="hostLabel">连接中</span><small>管理网络 · 需授权</small></div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div><div class="crumb">VMWARE / <span id="pageCrumb">概览</span></div><h1 id="pageTitle">管理概览</h1></div>
+      <div class="top-actions"><span class="sync" id="syncStatus">尚未同步</span><button class="btn ghost" id="accountSettingsBtn" type="button">账号与 API 密钥</button><button class="btn ghost" id="refreshBtn">↻ 刷新</button><button class="btn ghost" id="logoutBtn">退出</button></div>
+    </header>
+    <section class="page" id="page-system">
+      <div class="system-update-hero">
+        <div><span class="sys-eyebrow">SYSTEM / GITHUB RELEASES</span><h2>VM Orchestrator · 系统更新</h2>
+        <p>从绑定的 GitHub 私有仓库获取正式版本，验证 SHA-256 后自动备份、安装与重启。</p></div>
+        <span class="sys-safe-pill">仅管理员 · 数据不覆盖</span>
+      </div>
+      <div class="sys-version-grid">
+        <div class="panel sys-version"><small>当前安装</small><strong id="sysCurrentVersion">—</strong><span>本机运行版本</span></div>
+        <div class="panel sys-version"><small>GitHub 最新正式版</small><strong id="sysLatestVersion">尚未检查</strong><span id="sysAvailability">等待检查 GitHub Releases</span></div>
+        <div class="panel sys-version"><small>更新仓库</small><strong class="sys-repo-name" id="sysRepo">—</strong><span id="sysAuth">私有仓库需要本机授权令牌</span></div>
+      </div>
+      <section class="panel">
+        <div class="panel-head"><div><h2>版本检查与安装</h2><p>安装前暂停新的操作，存在运行中 VM 管理任务时不会执行更新。更新期间控制台会暂时断线。</p></div></div>
+        <div class="sys-actionbar"><button type="button" class="btn ghost" id="sysCheckBtn">检查更新</button>
+        <button type="button" class="btn primary" id="sysInstallBtn">一键获取并更新</button>
+        <span class="pill" id="sysUpdateBadge">未检查</span></div>
+        <div class="sys-progress" id="sysProgress" role="status" aria-live="polite">等待操作</div>
+        <pre id="sysReleaseNotes" class="sys-release-notes" hidden></pre>
+      </section>
+      <section class="panel"><h2>自动更新安全机制</h2><div class="sys-feature-grid">
+        <div><b>① 获取 Release</b><p>只读取配置仓库的稳定版本，不接受任意下载地址。</p></div>
+        <div><b>② 完整性校验</b><p>ZIP 必须与同一 Release 的 .sha256 校验文件一致。</p></div>
+        <div><b>③ 备份与升级</b><p>保存现有程序副本；数据库、证书、凭据和虚拟机保持原样。</p></div>
+        <div><b>④ 重启与回滚</b><p>服务健康检查失败时恢复旧程序并尝试重启。</p></div>
+        </div><p class="muted">私有仓库访问：在 Windows 宿主机打开 Manage.cmd → GitHub 更新源，设置令牌后重新启动 Host 服务。</p></section>
+    </section>
+    <section class="page active" id="page-overview">
+      <div class="stats">
+        <div class="stat"><span>虚拟机总数</span><strong id="statVm">—</strong><small>已登记实例</small></div>
+        <div class="stat"><span>正在运行</span><strong id="statRunning">—</strong><small>Power ON</small></div>
+        <div class="stat"><span>黄金模板</span><strong id="statTemplate">—</strong><small>已封存</small></div>
+        <div class="stat"><span>执行中任务</span><strong id="statJobs">—</strong><small>自动刷新</small></div>
+      </div>
+      <div class="cols-2">
+        <section class="panel"><div class="panel-head"><div><h2>快捷操作</h2><p>所有 VMware 操作都由 Host Agent 排队执行</p></div></div>
+          <div class="quick-actions"><button class="quick" data-goto="vms"><b>＋ 新建虚拟机</b><span>从封存模板执行完整克隆</span></button><button class="quick" data-goto="templates"><b>▣ 模板管理</b><span>查看模板与封存状态</span></button><button class="quick" data-goto="jobs"><b>◷ 任务进度</b><span>实时查看运行结果与错误</span></button></div>
+        </section>
+        <section class="panel"><div class="panel-head"><div><h2>宿主机状态</h2><p>运行环境和 VMware 工具</p></div></div><div id="capabilities" class="kv-list"><div class="muted">正在检查...</div></div></section>
+      </div>
+      <section class="panel"><div class="panel-head"><div><h2>最近任务</h2><p>后台每 5 秒同步任务状态；保留正在填写的选项</p></div><button class="btn ghost small" data-goto="jobs">查看全部</button></div><div id="overviewJobs" class="table-wrap"></div></section>
+    </section>
+    <section class="page" id="page-vms">
+      <section class="panel">
+        <div class="panel-head"><div><h2>从黄金模板创建虚拟机</h2><p>完整克隆后会自动准备独立的 VMware UUID/MAC；不会自动开机</p></div></div>
+        <form id="cloneForm" class="form-grid">
+          <label>黄金模板<select id="cloneTemplate" required><option value="">请选择已封存模板</option></select></label>
+          <label>虚拟机名称<input id="cloneName" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" maxlength="48" placeholder="Win10-Customer-02" required></label>
+          <label>客户标识（仅管理标签）<input id="cloneCustomer" maxlength="100" placeholder="customer-002"></label>
+          <label class="check-row"><input type="checkbox" id="cloneAutoStart" checked><span><b>克隆后自动启动</b><small>Windows 首次启动可能进入 OOBE</small></span></label>
+          <label class="check-row"><input type="checkbox" id="cloneEnableScreen" checked><span><b>自动启用本机截图</b><small>仅供宿主机本地访问，密码保存在该 VM 的 VMX</small></span></label>
+          <label class="check-row"><input type="checkbox" id="cloneUnattended" checked><span><b>Windows 10 无人值守首次配置（需新版模板）</b><small>需要选择已经用 V1.2 Administrator 引导脚本重新封存的黄金模板；每台 VM 使用独立账户密码，首次启动完成后由 Guest Agent 验证。</small></span></label>
+          <div class="form-submit"><button class="btn primary" type="submit">开始完整克隆</button></div>
+        </form>
+      </section>
+      <section class="panel"><div class="panel-head"><div><h2>虚拟机</h2><p>开关机 · 关机快照（每台最多 3 个）· 删除虚拟机</p></div><span class="muted" id="vmCount"></span></div><div id="vmList" class="vm-grid"></div></section>
+    </section>
+    <section class="page" id="page-templates">
+      <section class="panel"><div class="panel-head"><div><h2>现有黄金模板</h2><p>已封存的模板才能完整克隆</p></div></div><div id="templateList" class="template-list"></div></section>
+      <section class="panel"><div class="panel-head"><div><h2>扫描本地黄金模板</h2><p>自动寻找模板目录及其一级子目录内的 .vmx；只读扫描，不会自动修改或封存。</p></div><button class="btn ghost" id="scanTemplatesBtn" type="button">扫描模板目录</button></div><div id="discoveredTemplates" class="template-list"><p class="muted">点击「扫描模板目录」选择要登记的模板。</p></div></section>
+      <section class="panel"><div class="panel-head"><div><h2>登记新模板</h2><p>登记不会执行 Sysprep，也不会修改原始 VMX</p></div></div>
+        <form id="templateForm" class="form-grid"><label>模板名称<input id="templateName" maxlength="100" placeholder="Win10-Golden-v2" required></label><label class="wide">VMX 绝对路径（必须在 TemplatesRoot 之内）<input id="templatePath" placeholder="D:\VMware\Template\Win10-Golden-v2.vmx" required></label><div class="form-submit"><button class="btn primary" type="submit">登记模板</button></div></form>
+      </section>
+    </section>
+    <section class="page" id="page-updates">
+      <section class="panel">
+        <div class="panel-head"><div><h2>Guest Agent 与软件版本</h2><p>每台 Windows 独立注册、心跳和版本上报。Host Agent 默认仍仅本机管理；Guest 网关须单独启用 HTTPS。</p></div></div>
+        <div id="guestList" class="table-wrap"><div class="muted">载入中...</div></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>上传软件更新包</h2><p>SnowLuma：上传 ZIP、填写版本，再在更新包下方为指定客户机填写安装目录并下发。系统自动停止、备份、覆盖、重启及核验。DSH Desktop 保留签名安装器更新方式。</p></div></div>
+        <form id="uploadForm" class="form-grid">
+          <label>软件<select id="packageProduct"><option value="dsh">DSH</option><option value="snowluma">SnowLuma</option></select></label>
+          <label>版本号<input id="packageVersion" required placeholder="1.2.3" maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._+-]{0,39}"></label>
+          <label class="wide">本机审核过的 ZIP 文件<input type="file" id="packageFile" accept=".zip,application/zip" required></label>
+          <div class="form-submit"><button type="submit" class="btn primary">上传到更新库</button></div>
+        </form>
+        <div id="packageList" class="table-wrap"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>DSH 插件 · PowerShell 更新</h2><p>不需要上传 ZIP。在已登录 Windows 用户的 DSH Profile 中执行一条插件命令。建议使用固定版本的 add 命令；update 命令不一定能证明实际安装版本。</p></div></div>
+        <form id="pluginCommandForm" class="form-grid">
+          <label>客户虚拟机<select id="pluginVm" required><option value="">选择在线客户机</option></select></label>
+          <label>目标版本<input id="pluginVersion" placeholder="例如 0.15.6" maxlength="40" required></label>
+          <label class="wide">PowerShell 更新命令<input id="pluginCommand" autocomplete="off" spellcheck="false" placeholder="dsh plugin --profile desktop add @scope/package@0.15.6" required maxlength="1024"></label>
+          <p class="muted wide">仅允许单条 DSH plugin update/add 命令，不支持管道、拼接脚本或普通 PowerShell。命令在已登录 Windows 用户下运行，成功退出不代表插件已正确加载。</p>
+          <div class="form-submit"><button type="submit" class="btn primary">下发插件命令更新</button></div>
+        </form>
+      </section>
+      <section class="panel"><div class="panel-head"><div><h2>软件更新任务</h2><p>展示停止程序、文件切换、启动检查和版本核验等阶段；结果未知的安装任务不会自动重复执行。</p></div></div><div id="updateTaskList" class="table-wrap"></div><div id="updatesPager" class="pager"></div></section>
+      <section class="panel"><div class="panel-head"><div><h2>系统重装记录</h2><p>旧系统备份保存在 Customers/.vmo-reinstall-backups，不会随升级包清除。</p></div></div><div id="reinstallHistory" class="table-wrap"></div></section>
+    </section>
+    <section class="page" id="page-remote">
+      <section class="panel remote-hero">
+        <div class="panel-head"><div><h2>Guest Agent V2 · 远程运维</h2><p>已纳管的 Guest 信任宿主机管理员。WSS 实时通信 · 全部时间为北京时间 UTC+8。</p></div><button id="remoteRefresh" type="button" class="btn ghost">刷新当前虚拟机</button></div>
+        <div class="remote-top-row">
+          <label>当前虚拟机<select id="remoteVm"><option value="">请选择客户虚拟机</option></select></label>
+          <div class="remote-status-tile" id="remotePermissionStatus" role="status">管理权限：等待 Agent 上报</div>
+          <div class="remote-status-tile" id="remoteAgentUpgradeStatus" role="status">Guest Agent 版本：等待连接</div>
+          <button id="remoteAgentUpgradeBtn" type="button" class="btn ghost" disabled>从宿主机升级 Guest Agent</button>
+        </div>
+      </section>
+      <div class="remote-dashboard">
+        <div class="remote-column">
+          <section class="panel remote-section">
+            <div class="panel-head"><div><h2>远程命令</h2><p>宿主机管理员直接执行。持续运行服务可用后台模式；需要窗口时选前台交互模式。</p></div></div>
+            <div class="remote-form-two">
+              <label>执行身份<select id="remotePrivilege"><option value="system" selected>Agent SYSTEM（前台使用已登录用户身份）</option></select></label>
+              <label>命令环境<select id="remoteShell"><option value="cmd" selected>CMD</option><option value="powershell">PowerShell</option></select></label>
+              <label>执行方式<select id="remoteRunMode"><option value="wait">等待结果（获取输出）</option><option value="detached">后台启动（Session 0）</option><option value="interactive">前台运行（已登录用户桌面）</option></select></label>
+              <label>最长等待<select id="remoteTimeout"><option value="30">30 秒</option><option value="60" selected>60 秒</option><option value="120">120 秒</option><option value="300">300 秒</option></select></label>
+            </div>
+            <label class="remote-block-label">工作目录（可选，不固定所有命令；留空用 Windows 默认目录）<input id="remoteCwd" placeholder="例如 C:\dsh\Ayu-Breeze-Bridge-v1.4"></label>
+            <label class="remote-block-label">命令内容<textarea id="remoteCommand" rows="6" maxlength="8000" spellcheck="false" placeholder="例如：schtasks /run /tn &quot;\VMO-AyuBridge-Interactive&quot;"></textarea></label>
+            <div class="remote-command-meta"><span id="remoteCommandCount" role="status" aria-live="polite">0 / 8,000 字符（CMD）</span><span>CMD ≤ 8,000 · PowerShell ≤ 12,000；超过 2,000 字符需先升级 Guest Agent v2.0.21</span></div>
+            <div class="remote-buttons"><button type="button" class="btn primary" id="remoteExecBtn" disabled>执行命令</button><span class="muted">前台模式使用当前已登录用户的权限打开持续 CMD/PowerShell；没有用户登录时会明确失败。直接用 cd /d 进入目录并 call Start.bat。</span></div>
+          </section>
+          <section class="panel remote-section">
+            <div class="panel-head"><div><h2>文件与日志</h2><p>受限于 Agent 的 logs / incoming 目录，日志只读取末尾 24 KB。</p></div></div>
+            <div class="remote-form-two">
+              <label>查看目录<select id="remoteFileArea"><option value="logs">日志</option><option value="incoming">上传暂存目录</option></select></label>
+              <label>日志名称<input id="remoteLogName" value="agent-v2.log" maxlength="120" placeholder="agent-v2.log"></label>
+            </div>
+            <div class="remote-buttons"><button type="button" class="btn ghost" id="remoteListBtn">列出文件</button><button type="button" class="btn ghost" id="remoteLogBtn">查看日志</button></div>
+            <div class="remote-divider"></div>
+            <label class="remote-block-label">上传文件（流式传输，不设置人为文件大小上限）<input type="file" id="remoteFile"></label>
+            <label class="remote-block-label">虚拟机目标目录（可编辑）<input id="remoteUploadDirectory" value="C:\dsh\" placeholder="例如 D:\Tools\"></label>
+            <div class="remote-buttons"><button type="button" class="btn ghost" id="remoteUploadBtn">上传至指定目录</button><span class="muted" id="remoteUploadStatus">不会自动执行；已存在同名文件时拒绝覆盖。</span></div>
+            <progress id="remoteUploadProgress" max="100" value="0" style="width:100%;display:none"></progress>
+          </section>
+        </div>
+        <div class="remote-column">
+          <section class="panel remote-section remote-preview-section" aria-label="虚拟机画面预览">
+            <div class="panel-head remote-preview-head">
+              <div><h2>虚拟机画面预览 <span class="remote-preview-fps">1 秒 / 帧</span></h2><p>按需查看当前虚拟机画面；默认关闭，离开页面自动停止。</p></div>
+              <button type="button" class="btn ghost small" id="remotePreviewToggle" aria-pressed="false" disabled>开启预览</button>
+            </div>
+            <div class="remote-preview-frame" id="remotePreviewFrame">
+              <img id="remotePreviewImage" alt="所选虚拟机实时预览截图" hidden>
+              <div class="remote-preview-placeholder" id="remotePreviewEmpty">预览已关闭<br><small>选择虚拟机并点击「开启预览」</small></div>
+            </div>
+            <div class="remote-preview-status" id="remotePreviewStatus" role="status">只读截图 · 使用宿主机 127.0.0.1 VNC · 不提供键鼠控制</div>
+          </section>
+          <section class="panel remote-section">
+            <div class="panel-head"><div><h2>WSS 连接诊断</h2><p>区分 HTTPS 备用心跳与真正可执行的 WSS 连接。</p></div></div>
+            <div id="remoteConnection" class="remote-link-status" role="status">正在连接状态服务…</div>
+            <div class="remote-divider"></div>
+            <div class="remote-form-two remote-diag-row"><label>预设诊断<select id="remoteDiagnostic"><option value="hostname">计算机名</option><option value="network">网络信息</option><option value="processes">运行进程</option><option value="agent">Agent 服务</option><option value="software">软件检测</option></select></label><button type="button" class="btn ghost" id="remoteDiagBtn">下发诊断</button></div>
+          </section>
+          <section class="panel remote-section">
+            <div class="panel-head"><div><h2>应用上报</h2><p>SnowLuma / DSH-fish-soul 的入口与授权状态来自所选客户机。</p></div></div>
+            <div id="remoteApps" class="remote-compact-list"></div>
+          </section>
+        </div>
+      </div>
+      <section class="panel remote-section">
+        <div class="panel-head"><div><h2>最近执行记录</h2><p>只更新记录区域，不清空正在编辑的命令。未知结果不会自动重复执行。</p></div></div>
+        <div id="remoteOps" class="remote-ops-list"></div>
+        <div class="toolbar remote-pager"><button id="remotePrev" type="button" class="btn ghost small">上一页</button><span id="remotePageLabel">第 1 / 1 页</span><button id="remoteNext" type="button" class="btn ghost small">下一页</button></div>
+      </section>
+    </section>
+    <section class="page" id="page-clients">
+      <header class="biz-hero">
+        <div class="biz-hero-heading"><span class="biz-eyebrow">SIBHOSTING · CUSTOMER OPERATIONS</span><h2>客户服务工作台</h2><p>管理客户实例、商品授权、自助操作及服务规则。配置更集中，开通与续费流程保持不变。</p></div>
+        <button type="button" class="btn ghost biz-hero-refresh" id="bizRefreshTop">↻ 更新数据</button>
+      </header>
+      <div class="biz-metrics" aria-label="思博服务概览">
+        <div class="biz-metric"><span>服务实例</span><strong id="bizMetricServices">—</strong><small>已绑定思博业务</small></div>
+        <div class="biz-metric"><span>可用实例</span><strong id="bizMetricActive">—</strong><small>当前服务状态</small></div>
+        <div class="biz-metric"><span>商品映射</span><strong id="bizMetricProducts">—</strong><small>关联黄金模板</small></div>
+        <div class="biz-metric"><span>自助操作</span><strong id="bizMetricActions">—</strong><small>已配置操作数</small></div>
+      </div>
+      <div class="biz-layout">
+        <nav class="biz-menu" aria-label="客户服务子导航">
+          <div class="biz-menu-title">服务管理</div>
+          <button class="biz-tab active" type="button" data-biz-tab="services" aria-selected="true"><span class="biz-tab-icon">▣</span><span>客户实例<small>查看、预览与续费</small></span></button>
+          <button class="biz-tab" type="button" data-biz-tab="products" aria-selected="false"><span class="biz-tab-icon">▦</span><span>商品与模板<small>授权、绑定与映射</small></span></button>
+          <button class="biz-tab" type="button" data-biz-tab="actions" aria-selected="false"><span class="biz-tab-icon">⚡</span><span>客户自助<small>操作配置与执行记录</small></span></button>
+          <div class="biz-menu-title second">客户规则</div>
+          <button class="biz-tab" type="button" data-biz-tab="settings" aria-selected="false"><span class="biz-tab-icon">◷</span><span>公告与额度<small>弹窗、快照与月度限制</small></span></button>
+          <button class="biz-tab" type="button" data-biz-tab="bind" aria-selected="false"><span class="biz-tab-icon">⇄</span><span>迁移绑定<small>已存在虚拟机接入</small></span></button>
+          <div class="biz-menu-tip">正式客户开通由思博插件触发。这里的手动绑定仅供已有实例迁移使用。</div>
+        </nav>
+        <div class="biz-workspace">
+          <div class="biz-view active" data-biz-view="services"><div class="biz-work-head"><div><h3>客户实例</h3><p>集中查看服务状态与到期情况，快捷进入客户预览。</p></div><button id="bizGoBind" class="btn ghost small" type="button">绑定现有实例</button></div>
+<section class="panel biz-panel"><div class="panel-head"><div><h2>已绑定客户</h2><p>预览入口是 90 秒一次性凭据，单独客户会话。外网接入须经过受控 HTTPS 中转，不得公开管理员 API。</p></div><button id="bizRefresh" class="btn ghost small" type="button">刷新</button></div><div class="biz-filter-bar"><label class="biz-search-label"><span>搜索实例</span><input id="bizServiceSearch" type="search" placeholder="客户 ID、实例 ID、商品标识" autocomplete="off"></label><label class="biz-select-label"><span>实例状态</span><select id="bizStatusFilter"><option value="">全部状态</option><option value="ACTIVE">已开通</option><option value="PROVISIONING">开通中</option><option value="SUSPENDED">已暂停</option><option value="EXPIRED">已到期</option><option value="PROVISION_FAILED">开通失败</option><option value="TERMINATED">已终止</option></select></label></div><div id="bizServices" class="template-list biz-service-list"></div></section>
+          </div>
+          <div class="biz-view" data-biz-view="products"><div class="biz-work-head"><div><h3>商品与黄金模板</h3><p>为每个思博商品配置唯一的封存模板，确保自动开通使用受控来源。</p></div></div>
+<section class="panel biz-panel"><div class="panel-head"><div><h2>思博商品与黄金模板绑定</h2><p>客户开通时只能使用这里授权的封存模板；无需向客户暴露模板列表或管理密钥</p></div></div>
+        <form id="bizProductForm" class="form-grid">
+          <label>思博商品标识<input id="bizProductRef" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}" placeholder="win10-basic"></label>
+          <label>授权黄金模板<select id="bizTemplate" required></select></label>
+          <label class="check-row"><input type="checkbox" id="bizAllowUpdates"><span><b>允许客户使用管理员发布的软件更新操作</b><small>仅注册 Guest Agent 后可用</small></span></label>
+          <div class="form-submit"><button type="submit" class="btn primary" id="bizProductSave">保存商品映射</button><button type="button" class="btn ghost" id="bizProductCancel" hidden>取消修改</button></div>
+        </form><p class="muted" id="bizProductMode">选择一个商品映射进行修改；保存后只影响后续新开通的虚拟机。</p><div id="bizProducts" class="template-list"></div></section>
+          </div>
+          <div class="biz-view" data-biz-view="actions"><div class="biz-work-head"><div><h3>客户自助操作</h3><p>设置客户能看到和执行的操作，同时处理异常任务。</p></div></div>
+<section class="panel biz-panel"><div class="panel-head"><div><h2>客户自助操作配置</h2><p>为指定思博商品预设客户可点击的命令或更新包。命令只保存在宿主机，客户不能编辑或查看；默认不发布，启用后客户才看得到。</p></div><button class="btn ghost small" type="button" id="selfRefresh">刷新列表</button></div>
+        <form id="selfActionForm" class="form-grid">
+          <input type="hidden" id="selfEditId">
+          <label>适用思博商品<select id="selfProduct" required></select></label>
+          <label>客户显示顺序（数字越小越靠前）<input type="number" id="selfSortOrder" min="0" max="100000" value="100"></label>
+          <label>操作名称<input id="selfLabel" required maxlength="80" placeholder="例如：重启 SnowLuma"></label>
+          <label class="wide">客户可见说明<input id="selfDescription" maxlength="300" placeholder="例如：重启后应用将短暂断开，请勿重复点击"></label>
+          <label>执行类型<select id="selfKind"><option value="COMMAND">管理员预设命令</option><option value="SOFTWARE_UPDATE">软件更新包</option></select></label>
+          <label class="check-row"><input id="selfEnabled" type="checkbox"><span><b>允许客户执行</b><small>创建时默认关闭，管理员确认后再开启</small></span></label>
+          <div class="wide" id="selfCommandFields">
+            <div class="form-grid">
+              <label>命令环境<select id="selfShell"><option value="powershell">PowerShell</option><option value="cmd">CMD</option></select></label>
+              <label>运行方式<select id="selfRunMode"><option value="wait">等待结果</option><option value="detached">后台启动</option><option value="interactive">已登录用户桌面</option></select></label>
+              <label class="wide">管理员预设命令<textarea id="selfCommand" rows="3" maxlength="2000" spellcheck="false" placeholder="仅管理员填写，客户页面不显示"></textarea></label>
+              <label>工作目录（可留空）<input id="selfCwd" placeholder="例如 C:\dsh\SnowLuma-v2.4.2-win-x64"></label>
+              <label>等待秒数<input id="selfTimeout" type="number" min="5" max="300" value="60"></label>
+            </div>
+          </div>
+          <div class="wide" id="selfUpdateFields" hidden>
+            <div class="form-grid">
+              <label>已审核更新包<select id="selfPackage"></select></label>
+              <label>SnowLuma 目标目录（可留空）<input id="selfInstallDir" placeholder="C:\dsh\SnowLuma-v2.4.2-win-x64"></label>
+            </div>
+          </div>
+          <p class="muted wide">安全说明：客户点击会触发宿主机已批准的高权限操作。不要在命令中包含密码、Token 或不可撤销的危险动作。更新包需先在「软件更新」上传审核。</p>
+          <div class="form-submit"><button class="btn primary" type="submit">保存自助操作</button><button class="btn ghost" type="button" id="selfReset">新建另一项</button></div>
+        </form><div id="selfActionList" class="template-list"></div>
+        <hr><h3>客户自助任务 · 异常处理</h3>
+        <p class="muted">执行结果未知或版本待核验时，必须先由管理员检查客户机进程及日志，再手动解除阻塞；不会自动重试原任务。</p>
+        <div id="selfExecutionList" class="template-list"></div>
+      </section>
+          </div>
+          <div class="biz-view" data-biz-view="settings"><div class="biz-work-head"><div><h3>公告与客户额度</h3><p>统一管理通知展示频率、默认配额及单独客户限额。</p></div></div>
+<section class="panel biz-panel"><div class="panel-head"><div><h2>客户公告与使用额度</h2><p>公告默认每24小时展示；每次发布新公告，所有客户下次打开时至少展示一次。使用额度按北京时间自然月计算。</p></div></div>
+        <form id="customerAnnouncementForm" class="form-grid">
+          <label class="wide">公告正文<textarea id="customerAnnouncementBody" maxlength="4000" rows="4"></textarea></label>
+          <label>重复提醒间隔（小时）<input id="customerAnnouncementHours" type="number" min="1" max="720" value="24"></label>
+          <label class="check-row"><input type="checkbox" id="customerAnnouncementEnabled"><span><b>发布并启用公告</b></span></label>
+          <div class="form-submit"><button class="btn primary" type="submit">保存并发布新公告</button></div>
+        </form>
+        <hr><h3>默认客户使用额度</h3>
+        <form id="customerDefaultsForm" class="form-grid">
+          <label>快照数量上限<input id="customerDefaultSnapshots" type="number" min="0" max="100" value="3"></label>
+          <label>每月快照恢复次数<input id="customerDefaultRestores" type="number" min="0" max="100" value="3"></label>
+          <label>每月系统重装次数<input id="customerDefaultReinstalls" type="number" min="0" max="100" value="1"></label>
+          <div class="form-submit"><button class="btn primary" type="submit">保存默认额度</button></div>
+        </form>
+        <hr><h3>单独修改客户额度</h3>
+        <form id="customerServiceLimitsForm" class="form-grid">
+          <label>思博业务实例 ID<input id="customerLimitService" required placeholder="service-001"></label>
+          <label>快照数量上限<input id="customerLimitSnapshots" type="number" min="0" max="100" value="3"></label>
+          <label>每月快照恢复次数<input id="customerLimitRestores" type="number" min="0" max="100" value="3"></label>
+          <label>每月系统重装次数<input id="customerLimitReinstalls" type="number" min="0" max="100" value="1"></label>
+          <div class="form-submit"><button class="btn ghost" type="button" id="customerLimitLoad">读取客户当前额度</button><button class="btn primary" type="submit">保存此客户额度</button></div>
+        </form><p class="muted" id="customerLimitUsage"></p>
+      </section>
+          </div>
+          <div class="biz-view" data-biz-view="bind"><div class="biz-work-head"><div><h3>迁移与人工绑定</h3><p>仅用于已经存在的客户虚拟机，不替代正常订单自动开通流程。</p></div></div>
+<section class="panel biz-panel"><div class="panel-head"><div><h2>绑定已有客户虚拟机（迁移）</h2><p>手动绑定一个已就绪的 VM，生成本机客户视图。正式开通由思博服务端插件完成。</p></div></div>
+        <form id="bizBindForm" class="form-grid">
+          <label>思博业务实例 ID<input id="bizServiceRef" required maxlength="96" placeholder="service-001"></label>
+          <label>思博客户 ID<input id="bizCustomerRef" required maxlength="96" placeholder="user-001"></label>
+          <label>商品标识<select id="bizProductForBind" required></select></label>
+          <label>已有虚拟机<select id="bizExistingVm" required></select></label>
+          <label>服务到期时间（北京时间 UTC+8）<input type="datetime-local" id="bizExpiresAt" required></label>
+          <div class="form-submit"><button class="btn primary" type="submit">绑定服务实例</button></div>
+        </form></section>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="page" id="page-jobs"><section class="panel"><div class="panel-head"><div><h2>任务执行记录</h2><p>任务失败保留原因；自动刷新保留分页和所选项目</p></div><button class="btn ghost small" id="refreshJobs">刷新记录</button></div><div id="allJobs" class="table-wrap"></div><div id="jobsPager" class="pager"></div></section></section>
+    <footer class="main-footer">VM Orchestrator V1.4.38 · 双端口单进程 · 思博客户服务</footer>
+  </main>
+</div>
+<dialog id="accountDialog" class="dialog"><div class="dialog-head"><div><h2>管理员账户与 API 密钥</h2><p>修改密码会注销所有管理会话；API 密钥仅创建时显示一次，可随时撤销。</p></div><button class="icon-btn" type="button" id="accountClose">×</button></div>
+  <form id="passwordChangeForm" class="form-grid"><label>当前密码<input id="passwordCurrent" type="password" autocomplete="current-password" required></label><label>新密码<input id="passwordNew" type="password" autocomplete="new-password" required></label><div class="form-submit"><button class="btn primary" type="submit">修改密码并退出登录</button></div></form>
+  <hr><h3>可撤销 API 密钥</h3><form id="apiKeyCreateForm" class="form-grid"><label>密钥名称<input id="apiKeyName" required placeholder="思博 API / 自动化系统"></label><label>权限范围<select id="apiKeyScope"><option value="business">业务 API（开通/续费）</option><option value="admin">管理员 API（高权限）</option></select></label><div class="form-submit"><button class="btn primary" type="submit">生成 API 密钥</button></div></form>
+  <div id="apiKeyNewSecret" hidden><p class="warning">请立即复制：关闭后无法再次查看完整密钥。</p><textarea id="apiKeySecret" rows="2" readonly style="width:100%"></textarea><button id="apiKeyCopyBtn" type="button" class="btn ghost">复制</button></div><div id="apiKeysList" class="template-list"></div>
+</dialog>
+<div class="login-screen" id="loginScreen" hidden><form class="login-box" id="loginForm"><div class="brand-icon big">V</div><h2>连接 VM 管理后台</h2><p>使用管理员账号密码登录。浏览器仅保存 HttpOnly 会话 Cookie，不保存明文密钥。</p><label>登录密码<input id="loginKey" type="password" autocomplete="off" required placeholder="管理员密码"></label><button class="btn primary full" type="submit">进入控制台</button><div id="loginError" class="error-text" role="alert"></div><small>仅授权管理员访问；跨设备使用请通过受信任的 HTTPS 入口</small></form></div>
+<dialog id="vmDialog" class="dialog"><div class="dialog-head"><div><h2 id="dialogTitle">虚拟机</h2><p id="dialogSub"></p></div><button class="icon-btn" id="dialogClose" aria-label="关闭">×</button></div><div id="dialogBody"></div></dialog>
+<dialog id="testDialog" class="dialog"><div class="dialog-head"><div><h2>一键自动验收</h2><p id="testVmName"></p></div><button class="icon-btn" id="testClose" aria-label="关闭">×</button></div>
+ <form id="testForm" class="test-form"><p class="warning">仅限已关机、可丢弃的测试虚拟机。会操作真实 VMware 快照；建议先备份重要数据。</p>
+  <label class="check-row"><input type="checkbox" id="testConfirmed" required><span><b>确认这是专用测试 VM</b><small>当前 VM 非生产客户实例，允许创建和删除临时快照</small></span></label>
+  <label class="check-row"><input type="checkbox" id="testPower" checked><span><b>测试启动和软关机</b><small>需要 VMware Tools；首次开机可能执行 Windows 初始化</small></span></label>
+  <label class="check-row"><input type="checkbox" id="testRestore"><span><b>同时测试恢复快照</b><small>恢复刚创建的临时快照，仍可能影响快照树及后续更改</small></span></label>
+  <label class="check-row" id="restoreConfirmRow" hidden><input type="checkbox" id="testRestoreConfirm"><span><b>明确确认恢复快照的数据风险</b><small>仅能在可丢弃的测试 VM 上使用</small></span></label>
+  <div class="dialog-actions"><button class="btn ghost" type="button" id="testCancel">取消</button><button class="btn primary" type="submit">开始后台验收</button></div>
+ </form>
+</dialog>
+<dialog id="screenDialog" class="dialog screen-dialog"><div class="dialog-head"><div><h2 id="screenTitle">虚拟机屏幕</h2><p>首次开机、黑屏与 OOBE 画面查看</p></div><button class="icon-btn" id="screenClose" aria-label="关闭">×</button></div><p class="snap-hint" id="screenStatus" role="status">点击刷新抓取单帧</p><img id="screenImage" alt="虚拟机当前屏幕截图" hidden><div class="dialog-actions"><button class="btn primary" id="screenRefresh" type="button">↻ 刷新画面</button></div></dialog>
+<dialog id="reinstallDialog" class="dialog"><div class="dialog-head"><div><h2>从黄金模板重装系统</h2><p id="reinstallTarget"></p></div><button class="icon-btn" id="reinstallClose" aria-label="关闭">×</button></div>
+ <form id="reinstallForm" class="test-form">
+  <p class="warning">原 Windows、客户配置及当前快照不会保留在新系统内。旧 VM 文件目录将转入回退备份区，占用额外磁盘空间。重装后需要重新注册 Guest Agent。</p>
+  <label>选择黄金模板<select id="reinstallTemplate" required></select></label>
+  <label>请输入要重装的完整虚拟机名称<input id="reinstallTypedName" required autocomplete="off"></label>
+  <label class="check-row"><input id="reinstallUnattended" type="checkbox" checked><span>使用新版模板执行无人值守 OOBE（仅限已配置引导的模板）</span></label>
+  <label class="check-row"><input id="reinstallScreen" type="checkbox" checked><span>为新克隆配置仅本机截图</span></label>
+  <label class="check-row"><input id="reinstallEraseConfirm" type="checkbox" required><span>我了解新系统会替换原来的 Windows、程序配置、数据和快照</span></label>
+  <label class="check-row"><input id="reinstallBackupConfirm" type="checkbox" required><span>我已确认磁盘空间足够保留旧副本与新克隆的完整数据</span></label>
+  <div class="dialog-actions"><button type="button" class="btn ghost" id="reinstallCancel">取消</button><button type="submit" class="btn danger">提交重装任务</button></div>
+ </form></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body></html>

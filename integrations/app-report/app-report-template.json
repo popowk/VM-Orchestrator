@@ -1,0 +1,10 @@
+{
+  "app_id": "snowluma",
+  "url": "http://127.0.0.1:5099/",
+  "version": "2.4.2",
+  "online": true,
+  "auth": {
+    "kind": "random_password",
+    "access_code": null
+  }
+}

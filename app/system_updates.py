@@ -1,0 +1,235 @@
+"""Administratively authorized GitHub Releases self-updates.
+
+Only the pinned GitHub repo and a versioned ZIP + SHA256 sidecar are accepted.
+The Windows detached bootstrapper is responsible for replacing code after this
+process exits; runtime data, secrets and VM directories never enter the ZIP.
+"""
+from __future__ import annotations
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import threading
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import Request, HTTPRedirectHandler, build_opener
+import zipfile
+
+REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
+VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+MAX_PACKAGE = 30 * 1024 * 1024
+STATES = {"downloading", "verified", "applying", "restarting"}
+
+
+class UpdateError(RuntimeError):
+    pass
+
+
+# Only redirect to these GitHub-controlled hosts. Crucially, NEVER send a
+# private token to a different host after an HTTP redirect.
+DOWNLOAD_HOSTS = frozenset({
+    "api.github.com", "github.com", "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com", "github-releases.githubusercontent.com",
+})
+
+
+class _RestrictedGitHubRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        parsed = urlsplit(newurl)
+        if parsed.scheme != "https" or parsed.hostname not in DOWNLOAD_HOSTS:
+            raise UpdateError("GitHub 下载发生非预期重定向，已阻止")
+        redirected = super().redirect_request(request, fp, code, msg, headers, newurl)
+        if redirected is not None and parsed.hostname != urlsplit(request.full_url).hostname:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+def _numbers(version: str) -> tuple[int, int, int]:
+    match = VERSION_RE.fullmatch(str(version).strip())
+    if not match:
+        raise UpdateError("版本号格式不正确")
+    return tuple(map(int, match.groups()))
+
+
+def _get(url: str, token: str, max_bytes: int, accept: str) -> bytes:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname != "api.github.com":
+        raise UpdateError("更新请求只能连接 GitHub 官方 API")
+    headers = {"Accept": accept, "User-Agent": "VM-Orchestrator-Self-Updater/1.4.38",
+               "X-GitHub-Api-Version": "2026-03-10"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    req = Request(url, headers=headers)
+    try:
+        # Validate every redirect BEFORE connecting, not merely the final URL.
+        opener = build_opener(_RestrictedGitHubRedirect())
+        with opener.open(req, timeout=25) as response:
+            final = urlsplit(response.geturl())
+            if final.scheme != "https" or final.hostname not in DOWNLOAD_HOSTS:
+                raise UpdateError("更新下载来源未经认可")
+            payload = response.read(max_bytes + 1)
+            if len(payload) > max_bytes:
+                raise UpdateError("更新包超过大小限制")
+            return payload
+    except HTTPError as exc:
+        if exc.code in (401, 403, 404):
+            raise UpdateError("GitHub Release 不可读取：请检查私有仓库令牌及 Release 是否已发布") from exc
+        raise UpdateError(f"GitHub API HTTP {exc.code}") from exc
+    except URLError as exc:
+        raise UpdateError("GitHub 网络连接失败") from exc
+
+
+class UpdateService:
+    def __init__(self, project_root: Path):
+        self.project_root = Path(project_root).resolve()
+        self.current = (self.project_root / "VERSION").read_text(encoding="utf-8").strip()
+        self.repo = os.environ.get("VMO_UPDATE_REPO", "popowk/VM-Orchestrator").strip()
+        self.token = os.environ.get("VMO_UPDATE_GITHUB_TOKEN", "").strip()
+        self.work = self.project_root / "data" / "updates"
+        self.status_file = self.work / "status.json"
+        self._lock = threading.Lock()
+        self._release = None
+        if not REPO_RE.fullmatch(self.repo) or self.repo.startswith(".") or ".." in self.repo:
+            raise UpdateError("VMO_UPDATE_REPO 必须是 owner/repository 格式")
+
+    def _state(self, **fields):
+        self.work.mkdir(parents=True, exist_ok=True)
+        info = {"state": fields.pop("state"), "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **fields}
+        tmp = self.status_file.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(self.status_file)
+        return info
+
+    def status(self):
+        details = {"state": "idle"}
+        try:
+            details = json.loads(self.status_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            pass
+        details = {k: details.get(k) for k in ("state", "at", "version", "message", "backup") if k in details}
+        return {"current": self.current, "repository": self.repo, "configured_token": bool(self.token),
+                "update": details, "latest": (self._release or {}).get("tag_name")}
+
+    def _latest(self):
+        url = f"https://api.github.com/repos/{self.repo}/releases/latest"
+        data = _get(url, self.token, 512 * 1024, "application/vnd.github+json")
+        try:
+            release = json.loads(data)
+            tag = str(release["tag_name"])
+            version = tag.removeprefix("v")
+            _numbers(version)
+            if release.get("draft") or release.get("prerelease"):
+                raise UpdateError("不允许自动安装草稿或预览版")
+            file_name = f"VM-Orchestrator-v{version}.zip"
+            assets = {a.get("name"): a for a in release["assets"] if isinstance(a, dict)}
+            zip_asset = assets.get(file_name)
+            checksum_asset = assets.get(file_name + ".sha256")
+            if not zip_asset or not checksum_asset:
+                raise UpdateError("Release 缺少对应 ZIP 或 .sha256 校验文件")
+            for asset in (zip_asset, checksum_asset):
+                if asset.get("state") != "uploaded" or not isinstance(asset.get("id"), int):
+                    raise UpdateError("Release 中包含不可用的安装资源")
+            return release, version, zip_asset, checksum_asset
+        except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise UpdateError("GitHub Release 元数据异常") from exc
+
+    def check(self):
+        release, version, _, _ = self._latest()
+        self._release = {"tag_name": release["tag_name"]}
+        return {**self.status(), "latest": version,
+                "available": _numbers(version) > _numbers(self.current),
+                "published_at": release.get("published_at"),
+                "release_url": release.get("html_url", ""),
+                "notes": str(release.get("body") or "")[:4000]}
+
+    def _download_asset(self, asset_id: int, size: int) -> bytes:
+        return _get(f"https://api.github.com/repos/{self.repo}/releases/assets/{asset_id}",
+                    self.token, size, "application/octet-stream")
+
+    def install(self, version: str):
+        with self._lock:
+            if self._state_active():
+                raise UpdateError("已经有一个更新正在进行")
+            if _numbers(version) <= _numbers(self.current):
+                raise UpdateError("只能升级到更高版本")
+            self._state(state="downloading", version=version, message="正在获取 GitHub Release")
+            threading.Thread(target=self._worker, args=(version,), daemon=True).start()
+        return {"accepted": True, "version": version}
+
+    def _state_active(self):
+        try:
+            data = json.loads(self.status_file.read_text(encoding="utf-8"))
+            # A crashed updater should not lock out a machine forever.
+            if data.get("state") not in STATES:
+                return False
+            return time.time() - self.status_file.stat().st_mtime < 20 * 60
+        except (OSError, ValueError):
+            return False
+
+    def _worker(self, expected_version: str):
+        try:
+            release, version, archive_asset, sha_asset = self._latest()
+            if version != expected_version or _numbers(version) <= _numbers(self.current):
+                raise UpdateError("下载过程中 Release 已变化，请重新检查")
+            name = f"VM-Orchestrator-v{version}.zip"
+            sha_raw = self._download_asset(sha_asset["id"], 4096).decode("utf-8", "strict").strip()
+            match = re.fullmatch(r"([a-fA-F0-9]{64})\s+\*?" + re.escape(name), sha_raw)
+            if not match:
+                raise UpdateError("SHA256 校验清单内容不符合预期")
+            expected_hash = match.group(1).lower()
+            github_digest = archive_asset.get("digest")
+            if github_digest and github_digest != "sha256:" + expected_hash:
+                raise UpdateError("Release 资源摘要与 SHA256 清单不一致")
+            if isinstance(archive_asset.get("size"), int) and archive_asset["size"] > MAX_PACKAGE:
+                raise UpdateError("GitHub 资源大于 30MB 上限")
+            archive = self._download_asset(archive_asset["id"], MAX_PACKAGE)
+            actual_hash = hashlib.sha256(archive).hexdigest()
+            if actual_hash != expected_hash:
+                raise UpdateError("下载包 SHA256 不匹配，已拒绝安装")
+            stage = self.work / ("stage-v" + version)
+            stage.mkdir(parents=True, exist_ok=True)
+            zip_path = stage / name
+            zip_path.write_bytes(archive)
+            # Validate ZIP paths before invoking PowerShell or ending the service.
+            with zipfile.ZipFile(zip_path) as z:
+                entries = z.namelist()
+                prefix = "VM-Orchestrator-v" + version + "/"
+                if (not entries or len(entries) > 500 or
+                    sum(i.file_size for i in z.infolist()) > 100 * 1024 * 1024 or
+                    any(not n.startswith(prefix) or "\\" in n or
+                        any(part in ("", ".", "..") for part in n[len(prefix):].rstrip("/").split("/"))
+                        for n in entries if n != prefix)):
+                    raise UpdateError("ZIP 文件目录结构或解压大小不安全")
+                required = ["VERSION", "app/main.py", "Start-VM-Orchestrator.cmd", "Install-All.ps1"]
+                if any(prefix + n not in entries for n in required):
+                    raise UpdateError("更新包缺少核心文件")
+                if z.read(prefix + "VERSION").decode("utf-8").strip() != version:
+                    raise UpdateError("版本清单与 GitHub Release 不一致")
+                # Refuse runtime state and symlinks in a release.
+                if any(n[len(prefix):].startswith(("data/", ".git/", "backup-before-")) for n in entries):
+                    raise UpdateError("更新包包含禁止覆盖的数据目录")
+                if any((i.external_attr >> 16) & 0o170000 == 0o120000 for i in z.infolist()):
+                    raise UpdateError("更新包包含不允许的符号链接")
+            if os.name != "nt":
+                raise UpdateError("只有 Windows 宿主机支持自动安装")
+            script = self.project_root / "scripts" / "host" / "Apply-GitHubUpdate.ps1"
+            if not script.is_file():
+                raise UpdateError("缺少 Windows 自更新脚本")
+            self._state(state="verified", version=version, message="完整性校验通过，正在准备更新")
+            kwargs = {"cwd": str(self.project_root), "close_fds": True,
+                      "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS}
+            # Write the hand-off state BEFORE spawning the detached updater.
+            # Otherwise a fast child can finish and write 'success', then the
+            # parent would incorrectly overwrite it with 'applying'.
+            self._state(state="applying", version=version, message="即将由独立更新程序接管；管理端将短暂断开")
+            subprocess.Popen(["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-File", str(script),
+                "-ZipPath", str(zip_path), "-ExpectedSha256", expected_hash,
+                "-Target", str(self.project_root), "-HostPid", str(os.getpid()),
+                "-Version", version], **kwargs)
+        except Exception as exc:
+            # Never expose GitHub token, URLs with query strings, or stack traces.
+            self._state(state="failed", version=expected_version, message=str(exc)[:250])

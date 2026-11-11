@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<script src="/ui/app-route-recover.js"></script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>VM Orchestrator · 管理员登录</title>
+<link rel="stylesheet" href="/ui/login.css">
+<script src="/ui/login.js" defer></script>
+</head>
+<body>
+<main class="login-container">
+<form id="loginForm" class="login-card" autocomplete="off">
+<div class="logo" aria-hidden="true">V</div>
+<h1>VM Orchestrator</h1>
+
+<label for="loginUser">管理员账号</label>
+<input id="loginUser" name="username" autocomplete="username" required autofocus placeholder="账号">
+<label for="loginKey">登录密码</label>
+<input id="loginKey" name="password" type="password" autocomplete="current-password" required placeholder="输入管理员密码">
+<button id="loginSubmit" type="submit">进入控制台</button>
+<div id="loginError" class="error" role="alert" aria-live="polite"></div>
+<p class="hint">首次升级请在宿主机运行 Manage.cmd account 设置管理员密码。请通过 HTTPS 访问。</p>
+</form>
+</main>
+</body>
+</html>

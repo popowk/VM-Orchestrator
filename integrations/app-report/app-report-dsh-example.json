@@ -1,0 +1,10 @@
+{
+  "app_id": "dsh-fish-soul",
+  "url": "http://127.0.0.1:55701/",
+  "version": "0.2.1-rc.5",
+  "online": true,
+  "auth": {
+    "kind": "token",
+    "access_code": null
+  }
+}

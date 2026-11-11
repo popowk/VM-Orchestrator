@@ -1,0 +1,30 @@
+name: Publish a verified VMO release
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Match tag and installed version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "v$(cat VERSION | tr -d '\r\n')" = "$GITHUB_REF_NAME"
+      - name: Build release artifact and SHA-256 checksum
+        run: python tools/build_release.py
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(cat VERSION | tr -d '\r\n')
+          gh release create "v${v}" "dist/VM-Orchestrator-v${v}.zip" "dist/VM-Orchestrator-v${v}.zip.sha256" \
+            --title "VM Orchestrator v${v}" --generate-notes --verify-tag

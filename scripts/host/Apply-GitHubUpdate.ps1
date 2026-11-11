@@ -1,0 +1,196 @@
+# VM Orchestrator detached self updater. Windows PowerShell 5.1 compatible.
+# IMPORTANT: Runs outside the unified backend so it survives its termination.
+param(
+    [Parameter(Mandatory=$true)][string]$ZipPath,
+    [Parameter(Mandatory=$true)][string]$ExpectedSha256,
+    [Parameter(Mandatory=$true)][string]$Target,
+    [Parameter(Mandatory=$true)][int]$HostPid,
+    [Parameter(Mandatory=$true)][string]$Version
+)
+$ErrorActionPreference = 'Stop'
+$Target = [IO.Path]::GetFullPath($Target).TrimEnd('\')
+$ZipPath = [IO.Path]::GetFullPath($ZipPath)
+$stateDir = Join-Path $Target 'data\updates'
+$statePath = Join-Path $stateDir 'status.json'
+$logFile = Join-Path $stateDir 'updater.log'
+$folders = @('app','guest_agent','scripts','integrations','docs')
+$rootFiles = @('VERSION','Install-All.cmd','Install-All.ps1','Start-VM-Orchestrator.cmd',
+               'Manage.cmd','README.md','requirements.txt','.gitignore','.env.example')
+$backupDir = $null
+$switched = $false
+$stoppedOld = $false
+$oldVersion = $null
+
+function Log([string]$message) {
+    $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $message
+    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+}
+function Write-State([string]$status,[string]$description) {
+    $data = @{state=$status;version=$Version;message=$description;
+              at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')}
+    if ($backupDir) { $data['backup'] = $backupDir }
+    $json = $data | ConvertTo-Json -Compress -Depth 5
+    $temp = $statePath + '.tmp'
+    [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $temp -Destination $statePath -Force
+    Log "$status : $description"
+}
+function Probe-Version([string]$needed,[int]$attempts=30) {
+    for ($i=0; $i -lt $attempts; $i++) {
+        Start-Sleep -Seconds 3
+        try {
+            $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/health' -TimeoutSec 2 -ErrorAction Stop
+            $guestReady = @(Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue).Count -gt 0
+            if ($health.status -eq 'ok' -and $guestReady -and (($needed -eq '') -or ($health.version -eq $needed))) {
+                return $true
+            }
+        } catch { }
+    }
+    return $false
+}
+function Launch-Host {
+    $file = Join-Path $Target 'Start-VM-Orchestrator.cmd'
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+        throw 'Missing unified backend launcher'
+    }
+    Start-Process -FilePath $file -WorkingDirectory $Target
+}
+function Replace-Code([string]$from) {
+    foreach ($folder in $folders) {
+        $old = Join-Path $Target $folder
+        $new = Join-Path $from $folder
+        if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force }
+        if (Test-Path -LiteralPath $new -PathType Container) {
+            Copy-Item -LiteralPath $new -Destination $old -Recurse -Force
+        }
+    }
+    foreach ($name in $rootFiles) {
+        $new = Join-Path $from $name
+        $old = Join-Path $Target $name
+        if (Test-Path -LiteralPath $new -PathType Leaf) {
+            Copy-Item -LiteralPath $new -Destination $old -Force
+        }
+    }
+}
+function Restore-OldCode {
+    if (-not $backupDir) { throw 'No backup available for rollback' }
+    Replace-Code (Join-Path $backupDir 'code')
+    # Files introduced by the failed release but not present before updating
+    # are not part of an installed running process after directory restoration.
+    if ($oldVersion) { [IO.File]::WriteAllText((Join-Path $Target 'VERSION'),$oldVersion+[Environment]::NewLine) }
+}
+
+try {
+    if ($ExpectedSha256 -notmatch '^[a-fA-F0-9]{64}$' -or $Version -notmatch '^\d+\.\d+\.\d+$') {
+        throw 'Invalid update package identity'
+    }
+    if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) { throw 'Update ZIP not found' }
+    if (-not (Test-Path -LiteralPath (Join-Path $Target 'app\main.py'))) { throw 'Target not a VMO installation' }
+    $actual = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $ExpectedSha256.ToLowerInvariant()) { throw 'SHA256 verification failed' }
+    New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    $staging = Join-Path $stateDir ('unpacked-v' + $Version)
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        foreach ($entry in $zip.Entries) {
+            $name = $entry.FullName.Replace('\','/')
+            $prefix = 'VM-Orchestrator-v' + $Version + '/'
+            if (-not $name.StartsWith($prefix,[StringComparison]::Ordinal) -or
+                $name -match '(^/|(^|/)\.\.?(/|$)|:|//)') {
+                throw 'ZIP contains disallowed path'
+            }
+        }
+    } finally { $zip.Dispose() }
+    [IO.Compression.ZipFile]::ExtractToDirectory($ZipPath,$staging)
+    $source = Join-Path $staging ('VM-Orchestrator-v' + $Version)
+    if ((Get-Content -LiteralPath (Join-Path $source 'VERSION') -Raw).Trim() -ne $Version) {
+        throw 'Release version does not match archive'
+    }
+    foreach ($required in @('app\main.py','scripts\host\Start-Unified.ps1','Start-VM-Orchestrator.cmd')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $source $required) -PathType Leaf)) {
+            throw "Missing essential release file: $required"
+        }
+    }
+    # Leave the HTTP request sufficient time to receive the accepted response.
+    Start-Sleep -Seconds 4
+    Write-State 'applying' '版本包已解压校验，正在停止旧版服务'
+    $hostProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$HostPid" -ErrorAction SilentlyContinue
+    if ($hostProcess -and ($hostProcess.Name -notmatch '^python(w)?\.exe$' -or
+                          $hostProcess.CommandLine -notmatch 'app\.unified_server')) {
+        throw 'Refusing to terminate a process which is not the VMO unified backend'
+    }
+    if ($hostProcess) {
+        Stop-Process -Id $HostPid -Force -ErrorAction Stop
+        $stoppedOld = $true
+    }
+    Start-Sleep -Seconds 2
+    foreach ($port in @(8765,8766)) {
+        if (@(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue).Count -gt 0) {
+            throw "Port $port is still occupied, refusing to replace a running service"
+        }
+    }
+    $oldVersion = (Get-Content -LiteralPath (Join-Path $Target 'VERSION') -Raw).Trim()
+    $backupDir = Join-Path $stateDir ('backups\before-v' + $Version + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $backupCode = Join-Path $backupDir 'code'
+    New-Item -ItemType Directory -Path $backupCode -Force | Out-Null
+    foreach ($folder in $folders) {
+        $path = Join-Path $Target $folder
+        if (Test-Path -LiteralPath $path -PathType Container) {
+            Copy-Item -LiteralPath $path -Destination (Join-Path $backupCode $folder) -Recurse -Force
+        }
+    }
+    foreach ($name in $rootFiles) {
+        $path = Join-Path $Target $name
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            Copy-Item -LiteralPath $path -Destination (Join-Path $backupCode $name) -Force
+        }
+    }
+    Write-State 'applying' '程序文件已备份，正在替换旧版代码'
+    $switched = $true
+    Replace-Code $source
+    # Unlike a new system install, never initialize accounts, rotate keys,
+    # touch the database, or run Sysprep/Guest provisioning here.
+    $deps = Join-Path $Target 'scripts\host\Install-HostPythonDeps.ps1'
+    & $deps *> (Join-Path $stateDir 'dependencies.log')
+    if ($LASTEXITCODE -ne 0) { throw 'Python dependency installation failed' }
+    Write-State 'restarting' '新版程序已部署，正在启动并等待健康检查'
+    Launch-Host
+    if (-not (Probe-Version $Version)) { throw 'New Host service did not pass the health check' }
+    Write-State 'success' 'GitHub 更新成功，双端口统一服务已启动'
+} catch {
+    $errorMessage = $_.Exception.Message
+    Log ('ERROR: ' + $errorMessage)
+    if ($switched) {
+        try {
+            # Stop only the new VMO backend, if present.
+            $newService = Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($newService) {
+                $proc = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $newService.OwningProcess) -ErrorAction SilentlyContinue
+                if ($proc -and $proc.Name -match '^python(w)?\.exe$' -and $proc.CommandLine -match 'app\.unified_server') {
+                    Stop-Process -Id $proc.ProcessId -Force
+                    Start-Sleep -Seconds 2
+                }
+            }
+            Restore-OldCode
+            Launch-Host
+            if (Probe-Version '' 20) {
+                Write-State 'rolled_back' ('升级失败，已恢复旧版：' + $errorMessage)
+            } else {
+                Write-State 'failed' ('升级失败，恢复旧版后服务仍未就绪：' + $errorMessage)
+            }
+        } catch { Write-State 'failed' ('回滚失败：' + $_.Exception.Message) }
+    } else {
+        # If old service was stopped before the backup, restart unmodified code.
+        try {
+            if ($stoppedOld -and @(Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue).Count -eq 0) {
+                Launch-Host
+            }
+        } catch { }
+        Write-State 'failed' ('安装未完成，程序未替换：' + $errorMessage)
+    }
+    exit 1
+}
