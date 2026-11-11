@@ -1,4 +1,4 @@
-# VM Orchestrator — 功能总览（v1.4.43）
+# VM Orchestrator — 功能总览（v1.4.44）
 
 VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机运营管理系统。正式发布包仅包含运行程序与必要安装/运维脚本；此文件为唯一的产品说明。
 
@@ -9,7 +9,7 @@ VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机
 - **客户门户**：一次性票据登录、服务状态、截图、快照和关机/重装自助、执行历史、限额、公告弹窗。公告按原文纯文本保留换行、空行、缩进，后台预览与客户端使用一致的空白字符规则。
 - **远程运维**：WSS Guest Agent、CMD（8,000 字符）、PowerShell（12,000 字符）远程命令、实时状态、WSS 诊断、可开启/关闭的约 1 秒截图预览。
 - **Guest Agent V2**：HTTPS/WSS 身份认证、心跳和指令、自动检测匹配版本并安全升级；旧 Agent 的独立 V1 文件为兼容既有客户保留。
-- **系统更新**：管理员检查 GitHub Releases，一键下载并校验 SHA-256；独立 PowerShell 接管、备份、重启、健康验证及失败回滚。首次在正式宿主机操作前应备份并验证回滚。
+- **系统更新**：管理员检查 GitHub Releases，一键下载并校验 SHA-256；比较版本包实际文件变化，仅 HTML/CSS/JS/说明时原子热替换且不重启服务；Python/依赖/Guest 变化时由独立 PowerShell 接管、备份、重启、健康验证及失败回滚。升级状态按单次尝试编号记录，日志不混用历史成功记录；新旧服务 PID 和健康版本联合校验，未确认接管时明确提示人工核查。首次在正式宿主机操作前应备份并验证回滚。
 - **网络与权限**：Host 8765 管理端与 Guest 8766 HTTPS 网关运行在统一 Python 后端进程中，权限隔离，客户不得访问管理员 API。
 
 ## 目录说明

@@ -5,14 +5,17 @@ param(
     [Parameter(Mandatory=$true)][string]$ExpectedSha256,
     [Parameter(Mandatory=$true)][string]$Target,
     [Parameter(Mandatory=$true)][int]$HostPid,
-    [Parameter(Mandatory=$true)][string]$Version
+    [Parameter(Mandatory=$true)][string]$Version,
+    [string]$Attempt = ''
 )
 $ErrorActionPreference = 'Stop'
 $Target = [IO.Path]::GetFullPath($Target).TrimEnd('\')
 $ZipPath = [IO.Path]::GetFullPath($ZipPath)
 $stateDir = Join-Path $Target 'data\updates'
 $statePath = Join-Path $stateDir 'status.json'
-$logFile = Join-Path $stateDir 'updater.log'
+if (-not $Attempt) { $Attempt = [guid]::NewGuid().ToString('N') }
+if ($Attempt -notmatch '^[0-9a-fA-F]{32}$') { throw 'Invalid update attempt identifier' }
+$logFile = Join-Path $stateDir ('updater-' + $Attempt + '.log')
 $folders = @('app','guest_agent','scripts','integrations','docs')
 $rootFiles = @('VERSION','Install-All.cmd','Install-All.ps1','Start-VM-Orchestrator.cmd',
                'Manage.cmd','Repair-Stuck-Update.cmd','Repair-Stuck-Update.ps1',
@@ -30,11 +33,11 @@ function Log([string]$message) {
     Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
 }
 function Write-State([string]$status,[string]$description) {
-    $data = @{state=$status;version=$Version;message=$description;
+    $data = @{state=$status;version=$Version;attempt=$Attempt;mode='restart';pid=$PID;message=$description;
               at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')}
     if ($backupDir) { $data['backup'] = $backupDir }
     $json = $data | ConvertTo-Json -Compress -Depth 5
-    $temp = $statePath + '.tmp'
+    $temp = $statePath + '.ps-' + $PID + '.tmp'
     [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $temp -Destination $statePath -Force
     Log "$status : $description"
@@ -45,7 +48,14 @@ function Probe-Version([string]$needed,[int]$attempts=30) {
         try {
             $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/health' -TimeoutSec 2 -ErrorAction Stop
             $guestReady = @(Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue).Count -gt 0
-            if ($health.status -eq 'ok' -and $guestReady -and (($needed -eq '') -or ($health.version -eq $needed))) {
+            $listener = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+            $freshPid = if ($listener) { [int]$listener.OwningProcess } else { 0 }
+            # Older release's /health response had no PID. On rollback we
+            # accept the previous service if its port is owned by a new PID.
+            $pidMatches = (($needed -eq '') -or ($health.pid -and [int]$health.pid -eq $freshPid))
+            if ($health.status -eq 'ok' -and $guestReady -and $freshPid -gt 0 -and
+                $freshPid -ne $HostPid -and $pidMatches -and
+                (($needed -eq '') -or ($health.version -eq $needed))) {
                 return $true
             }
         } catch { }

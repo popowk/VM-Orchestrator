@@ -2,7 +2,7 @@
 # Run as the SAME logged-in Windows user that runs VMware/Host, not SYSTEM.
 param(
     [string]$Target = 'D:\VMware\VM-Orchestrator',
-    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.43.zip')
+    [string]$ZipPath = (Join-Path $PSScriptRoot 'VM-Orchestrator-v1.4.44.zip')
 )
 $ErrorActionPreference='Stop'
 try {
@@ -66,7 +66,7 @@ try {
     Write-Host 'The existing code is backed up before replacement. Customer data is preserved.' -ForegroundColor Cyan
     & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $runner `
         -ZipPath $ZipPath -ExpectedSha256 $expected -Target $Target -HostPid $hostPid -Version $version
-    if ($LASTEXITCODE -ne 0) { throw 'Detached updater failed. Inspect data\updates\updater.log' }
+    if ($LASTEXITCODE -ne 0) { throw 'Detached updater failed. Inspect data\updates\updater-*.log' }
     Write-Host 'Host started and passed the health check.' -ForegroundColor Green
 } catch {
     Write-Host ('Recovery failed: '+$_.Exception.Message) -ForegroundColor Red

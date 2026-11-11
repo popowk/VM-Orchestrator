@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.43 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.44 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -1193,11 +1193,25 @@ window.VMOSelfService=(()=>{
  }
  function show(data){
    setText('sysCurrentVersion','v'+data.current);setText('sysRepo',data.repository);
+   // After a backend restart, this tab can still be running the previous
+   // version's JS. Reload once to bind newly installed handlers and assets.
+   const loadedScript=document.querySelector('script[src*="/ui/admin.js"]');
+   const loadedVer=loadedScript?.getAttribute('src')?.match(/[?&]v=([0-9.]+)/)?.[1];
+   if(data.update?.state==='success' && loadedVer && data.current!==loadedVer){
+      setText('sysProgress','新版本已成功启动，正在刷新后台页面…');
+      window.location.reload();
+      return;
+   }
+   if(data.update?.state==='success'){
+      available=false;
+      setText('sysAvailability','已安装');
+      setText('sysUpdateBadge','更新成功');
+   }
    setText('sysAuth',data.configured_token?'已配置私有仓库令牌':'无令牌：只可访问公开的 Releases');
    const update=data.update||{};
-   const names={idle:'未开始',downloading:'下载中',verified:'校验通过',handoff:'启动独立更新器',preparing:'独立更新器已启动',stopping:'停止旧版服务',backing_up:'备份旧版程序',applying:'正在替换程序',restarting:'重新启动',success:'已完成',failed:'更新失败',rolled_back:'已回滚'};
-   setText('sysProgress',(names[update.state]||update.state||'未开始')+' · '+(update.message||'等待操作'));
-   if(['downloading','verified','handoff','preparing','stopping','backing_up','applying','restarting'].includes(update.state)){
+   const names={idle:'未开始',downloading:'下载中',verified:'校验通过',handoff:'启动独立更新器',preparing:'独立更新器已启动',stopping:'停止旧版服务',backing_up:'备份旧版程序',applying:'正在替换程序',restarting:'重新启动',hot_applying:'页面热更新中',unconfirmed:'等待人工确认',success:'已完成',failed:'更新失败',rolled_back:'已回滚'};
+   setText('sysProgress',(names[update.state]||update.state||'未开始')+' · '+(update.mode==='hot'?'[免重启] ':update.mode==='restart'?'[安全重启] ':'')+(update.message||'等待操作'));
+   if(['downloading','verified','handoff','preparing','stopping','backing_up','applying','restarting','hot_applying'].includes(update.state)){
      busy=true;buttonState(); if(!timer)timer=setInterval(poll,2500);
    } else {
      busy=false;buttonState();if(timer){clearInterval(timer);timer=null;}
@@ -1221,7 +1235,7 @@ window.VMOSelfService=(()=>{
   // One-click path checks GitHub before showing the installation confirmation.
   await check();
   if(!available||!latest)return;
-  if(!confirm('确认更新到 v'+latest+'？\n\n系统将下载、校验和备份，然后自动停止 8765/8766 服务、替换程序并重新启动。\n已有数据库、密钥、Guest Agent 身份和虚拟机不会覆盖。建议先确认未在执行 VM 操作。'))return;
+  if(!confirm('确认更新到 v'+latest+'？\n\n系统会先检查变更：仅 HTML/CSS/JS 时免重启热替换；后端/依赖变更时先备份并安全重启。\n已有数据库、密钥、Guest Agent 身份和虚拟机不会覆盖。建议先确认未在执行 VM 操作。'))return;
   try{
    const result=await request('/api/system/update/apply','POST',{version:latest,confirm:true});
    available=false;busy=true;buttonState();setText('sysProgress','更新已提交：v'+result.version+'，下载与校验开始');
@@ -1236,7 +1250,7 @@ window.VMOSelfService=(()=>{
     pre.hidden=false;pre.textContent='正在获取更新器日志…';
     try{
       const data=await request('/api/system/update/log');
-      pre.textContent=Object.entries(data.logs||{}).map(([name,content])=>
+      pre.textContent='本次更新标识：'+(data.attempt||'旧版未提供')+'\n\n'+Object.entries(data.logs||{}).map(([name,content])=>
         '--- '+name+' ---\n'+content).join('\n\n');
     }catch(e){pre.textContent='无法读取日志：'+e.message;}
   });
