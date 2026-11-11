@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.50 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.51 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -59,11 +59,47 @@ async function refresh(){if(state.busy || !state.csrf)return;state.busy=true; tr
   $('hostDot').className='dot '+(caps.vmrun_responding?'ok':'bad');$('hostLabel').textContent=caps.vmrun_responding?'服务正常':'VMware 工具异常';
   for(const id of Array.from(state.watched)){const j=state.jobs.find(x=>x.id===id);if(j && ['SUCCEEDED','FAILED'].includes(j.status)){state.watched.delete(id);toast(`${j.action}：${statusName[j.status]}${j.detail?' · '+j.detail:''}`,j.status==='FAILED');}}
  }catch(e){$('hostDot').className='dot bad';$('hostLabel').textContent='连接异常';toast(e.message,true);}finally{state.busy=false;}}
+
+function hostBytes(n){const x=Number(n);if(!Number.isFinite(x))return '—';return x>=1073741824?(x/1073741824).toFixed(1)+' GB':x>=1048576?(x/1048576).toFixed(1)+' MB':x>=1024?(x/1024).toFixed(1)+' KB':x+' B';}
+async function refreshHostMetrics(){
+  const grid=$('hostGauges'),details=$('hostResourceDetails'),stamp=$('hostGaugeTime');if(!grid||!details)return;
+  try{
+    const m=await request('/api/host/metrics');grid.replaceChildren();details.replaceChildren();
+    if(!m.available){grid.append(el('p','muted',m.message||'性能计数器暂不可用'));stamp.textContent='不可用';return;}
+    function dial(name,percent,value,info,color){
+      const tile=el('div','vmo-gauge-card'),ring=el('div','vmo-gauge-ring'),inner=el('div','vmo-gauge-inner');
+      ring.style.setProperty('--gauge-fill',Math.max(0,Math.min(100,Number(percent)||0))+'%');
+      ring.style.setProperty('--gauge-color',color);
+      inner.append(el('strong','',value),el('small','',name));
+      ring.append(inner);tile.append(ring,el('div','vmo-gauge-description',info));grid.append(tile);
+    }
+    dial('CPU',m.cpu?.percent,(m.cpu?.percent??'—')+'%',(m.cpu?.physical_cores??'—')+' 核 / '+(m.cpu?.logical_cores??'—')+' 线程','#3c70e0');
+    dial('内存',m.memory?.percent,(m.memory?.percent??'—')+'%',hostBytes(m.memory?.used)+' / '+hostBytes(m.memory?.total),'#8264d9');
+    const disks=Array.isArray(m.disks)?m.disks:[],disk=disks.find(x=>x.available!==false&&Number.isFinite(Number(x.percent)));
+    dial('磁盘',disk?.percent,disk?disk.percent+'%':'—',disk?disk.volume+' · 剩余 '+hostBytes(disk.free):'计数器不可用','#d99543');
+    const net=el('div','vmo-gauge-card vmo-network-card');
+    net.append(el('div','vmo-network-icon','↕'),el('strong','vmo-network-title','网络流量'));
+    const ready=m.network?.sample_ready;
+    net.append(el('div','vmo-network-value','↓ '+(ready?hostBytes(m.network.download_bps)+'/s':'采样中')),
+               el('div','vmo-network-value','↑ '+(ready?hostBytes(m.network.upload_bps)+'/s':'采样中')),
+               el('small','muted','宿主机全部网卡合计速率'));
+    grid.append(net);
+    for(const volume of disks){if(volume.available===false)continue;
+      const line=el('div','vmo-host-disk-row');
+      line.append(el('span','',volume.label+' · '+volume.volume),el('strong','',hostBytes(volume.used)+' / '+hostBytes(volume.total)));
+      details.append(line);
+    }
+    details.append(el('div','vmo-host-disk-row','宿主机：'+(m.host||'未知')+' · 已运行约 '+Math.floor((m.uptime_seconds||0)/3600)+' 小时'));
+    stamp.textContent='采样：'+VMO_BJT(m.sample_time*1000);
+  }catch(e){grid.replaceChildren(el('p','muted','读取失败：'+e.message));details.replaceChildren();stamp.textContent='获取失败';}
+}
+
 function renderOverview(){
   $('statVm').textContent=state.vms.length;$('statRunning').textContent=state.vms.filter(x=>x.power_state==='POWERED_ON').length;$('statTemplate').textContent=state.templates.filter(x=>x.status==='SEALED_ATTESTED').length;$('statJobs').textContent=state.jobs.filter(x=>['QUEUED','RUNNING'].includes(x.status)).length;
   let caps=$('capabilities');caps.replaceChildren();
   [['vmrun.exe',state.capabilities.vmrun_present],['vmrun 响应',state.capabilities.vmrun_responding],['模板目录',state.capabilities.templates_root_present],['客户 VM 目录',state.capabilities.vms_root_present],['Guest HTTPS 网关已配置',state.capabilities.guest_gateway_configured]].forEach(([name,yes])=>{let row=el('div','kv');row.append(el('span','',name),badge(yes?'SUCCEEDED':'FAILED'));caps.append(row);});
   renderJobTable('overviewJobs',state.jobs.slice(0,5));
+   refreshHostMetrics();
 }
 function renderTemplates(){let wrap=$('templateList');wrap.replaceChildren();let opts=$('cloneTemplate'),old=opts.value;opts.replaceChildren(new Option('请选择已封存模板',''));
  if(!state.templates.length){wrap.append(el('p','empty','还没有注册模板；请点击下方扫描模板目录'));return;}
@@ -1054,7 +1090,7 @@ window.VMOSelfService=(()=>{
    page=paged.page;by('remotePageLabel').textContent=`第 ${page} / ${paged.pages} 页 · ${paged.total} 条`;
    by('remotePrev').disabled=page<=1;by('remoteNext').disabled=page>=paged.pages;
    const ops=paged.items||[];
-   const fingerprint=JSON.stringify(ops.map(o=>[o.id,o.state,o.attempt_count,o.completed_at,o.last_error]));
+   const fingerprint=JSON.stringify(ops.map(o=>[o.id,o.state,o.attempt_count,o.completed_at,o.last_error,o.result]));
    if(fingerprint===opsFingerprint)return;opsFingerprint=fingerprint;
    const target=by('remoteOps');const opened=new Set([...target.querySelectorAll('details[open]')].map(x=>x.dataset.id));
    target.replaceChildren();
@@ -1066,14 +1102,23 @@ window.VMOSelfService=(()=>{
      if(op.state==='CLAIMED')row.append(txt('span','已投递，等待开始确认','muted'));
      if(op.state==='RUNNING')row.append(txt('span','客户端正在执行','muted'));
      if(op.state==='TIMED_OUT')row.append(txt('span','执行结果未知：避免自动重复执行；请先查看进程和日志。','muted'));
-     if(op.last_error)row.append(txt('span',op.last_error,'muted'));
+     if(op.last_error && !(op.action==='COMMAND'&&op.state==='FAILED'))row.append(txt('span',op.last_error,'muted'));
      if(op.attempt_count>1)row.append(txt('span','投递尝试次数（非执行次数）：'+op.attempt_count,'muted'));
      const result=op.result||{};
-     if(result.error==='TimeoutExpired')row.append(txt('span','命令超时：长驻程序请选前台交互（需要登录用户），或后台模式并单独检查服务状态。','muted'));
-     if(Object.keys(result).length){
+     if(result.error==='TimeoutExpired')row.append(txt('span','命令超时：先检查进程和日志，不自动重复执行。','muted'));
+     if(op.action==='COMMAND'&&op.state==='FAILED'){
+       const message=String(result.stderr||result.error||op.last_error||'命令执行失败，没有错误输出')
+         .split(/\r?\n/).map(x=>x.trim()).filter(Boolean).slice(0,6).join('\n').slice(0,900);
+       row.append(txt('pre',message,'vmo-command-error'));
+     }else if(op.action==='COMMAND'){
+       const output=[result.stdout?String(result.stdout).trim():'',result.stderr?String(result.stderr).trim():''].filter(Boolean).join('\n');
+       if(output){
+         const d=document.createElement('details');d.dataset.id=op.id;d.open=opened.has(op.id);
+         d.append(txt('summary','查看输出 · '+op.id),txt('pre',output));row.append(d);
+       }else row.append(txt('small',op.id,'muted'));
+     }else if(Object.keys(result).length){
        const d=document.createElement('details');d.dataset.id=op.id;d.open=opened.has(op.id);
-       d.append(txt('summary','查看输出 · '+op.id),txt('pre',JSON.stringify(result,null,2)));
-       row.append(d);
+       d.append(txt('summary','查看输出 · '+op.id),txt('pre',JSON.stringify(result,null,2)));row.append(d);
      }else row.append(txt('small',op.id,'muted'));
      target.append(row);
    }
@@ -1300,7 +1345,7 @@ window.VMOSelfService=(()=>{
    if(!out||!vms||!blocked)return;
    out.replaceChildren();vms.replaceChildren();blocked.replaceChildren();
    const label={program_cache:'旧更新临时缓存',old_log:'旧更新日志',
-                code_backup:'历史代码备份',reinstall_backup:'重装 VM 备份'};
+                code_backup:'历史代码备份',reinstall_backup:'重装 VM 备份',update_artifact:'更新脚本与日志',program_extra:'版本外文件',data_cache:'数据临时文件'};
    function section(item,root){
      const row=el('div','template-card'),details=el('div');
      const head=el('label','check-row');
@@ -1310,6 +1355,7 @@ window.VMOSelfService=(()=>{
      const name=el('strong','',item.title);head.append(ck,name);
      details.append(head,el('small','',label[item.kind]+' · '+fmt(item.bytes)+' · '+item.files+' 个文件'));
      details.append(el('small','',item.path));
+      if(item.reason)details.append(el('small','',item.reason));
      row.append(details);root.append(row);
    }
    candidates.forEach(item=>section(item,item.kind==='reinstall_backup'?vms:out));
@@ -1320,7 +1366,7 @@ window.VMOSelfService=(()=>{
    }
    if(!blocked.childElementCount)blocked.append(el('p','muted','没有需要人工处理的候选项目。'));
    $('cleanupSummary').textContent='可检查 '+candidates.length+' 项，合计 '+fmt(data.total_bytes)+
-       '；其中旧虚拟机备份 '+(data.reinstall_backups||0)+' 项。勾选后才会删除。';
+       '；其中旧虚拟机备份 '+(data.reinstall_backups||0)+' 项，受保护 '+(data.protected_count||0)+' 项。勾选后才会删除。';
  }
  async function scan(){
    if(scanning||deleting)return;
