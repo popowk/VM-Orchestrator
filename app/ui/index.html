@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.50"></script>
+<script src="/ui/app-route-recover.js?v=1.4.51"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.50">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.51">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.50" defer></script>
+<script src="/ui/admin.js?v=1.4.51" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -70,6 +70,11 @@
         <div class="stat"><span>黄金模板</span><strong id="statTemplate">—</strong><small>已封存</small></div>
         <div class="stat"><span>执行中任务</span><strong id="statJobs">—</strong><small>自动刷新</small></div>
       </div>
+      <section class="panel vmo-host-dashboard" aria-label="服务器实时性能仪表盘">
+        <div class="panel-head"><div><h2>服务器实时仪表盘</h2><p>宿主机 CPU、内存、磁盘与网络实际采样，每次概览刷新同步更新</p></div><small id="hostGaugeTime" class="muted">正在读取服务器状态…</small></div>
+        <div id="hostGauges" class="vmo-gauges"><p class="muted">正在获取性能计数器…</p></div>
+        <div id="hostResourceDetails" class="vmo-host-resource-details"></div>
+      </section>
       <div class="cols-2">
         <section class="panel"><div class="panel-head"><div><h2>快捷操作</h2><p>所有 VMware 操作都由 Host Agent 排队执行</p></div></div>
           <div class="quick-actions"><button class="quick" data-goto="vms"><b>＋ 新建虚拟机</b><span>从封存模板执行完整克隆</span></button><button class="quick" data-goto="templates"><b>▣ 模板管理</b><span>查看模板与封存状态</span></button><button class="quick" data-goto="jobs"><b>◷ 任务进度</b><span>实时查看运行结果与错误</span></button></div>
@@ -131,7 +136,7 @@
     <section class="page" id="page-cleanup">
       <section class="panel">
         <div class="panel-head">
-          <div><h2>一键空间清理</h2><p>仅扫描 VMO 已知的临时文件和有完整重装记录的旧虚拟机备份。先预览后清理，不清理当前客户机、黄金模板和数据库。</p></div>
+          <div><h2>一键空间清理</h2><p>以当前发布版文件清单对照程序目录，并分类扫描 data/updates 历史缓存、日志、更新备份和已完成重装的旧虚拟机备份。仅预览后确认删除，数据库及当前客户机始终受保护。</p></div>
         </div>
         <div class="sys-actionbar">
           <button type="button" class="btn ghost" id="cleanupScanBtn">重新扫描</button>
@@ -141,7 +146,7 @@
         <p id="cleanupSummary" class="muted" role="status">尚未扫描</p>
       </section>
       <section class="panel">
-        <div class="panel-head"><div><h2>程序临时文件与旧更新备份</h2><p>超过保留期的缓存和日志可选；旧版本代码备份默认不选，始终保留最近两份回滚备份。</p></div></div>
+        <div class="panel-head"><div><h2>程序临时文件与旧更新备份</h2><p>升级完成即可识别废弃解压目录；脚本/日志/非发行版文件标记原因、默认不选，最近两份回滚备份强制保留。</p></div></div>
         <div id="cleanupProgramItems" class="template-list"></div>
       </section>
       <section class="panel">
