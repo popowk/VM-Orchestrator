@@ -1352,6 +1352,88 @@ window.VMOSelfService=(()=>{
 })();
 
 
+
+/* ===== Verified Host restart and background log inspection (no Stop UI) ===== */
+(() => {
+  let restarting=false, originalPid=null, attemptId='', pending=null, checks=0;
+  const by=id=>document.getElementById(id);
+  const updateText=value=>{if(by('hostProcessStatus'))by('hostProcessStatus').textContent=value;};
+  function badge(message,error=false){
+    const node=by('hostProcessBadge');
+    if(node){node.textContent=message;node.className='pill '+(error?'bad':'ok');}
+  }
+  function show(info){
+    const op=info.restart||{};
+    if(!restarting)updateText('VMO 服务运行中 · PID '+(info.pid||'—')+
+      ' · 启动约 '+Math.floor((info.uptime_seconds||0)/60)+' 分钟'+
+      (op.message?' · 最近重启：'+op.message:''));
+    badge(info.running?'运行中':'未知',!info.running);
+  }
+  async function load(){
+    try{show(await request('/api/system/host/status'));}
+    catch(e){badge('读取失败',true);updateText('无法获取后台服务状态：'+e.message);}
+  }
+  async function logs(){
+    const panel=by('hostRuntimeLogs');
+    if(!panel)return;
+    panel.hidden=false;panel.textContent='正在读取后台日志…';
+    try{
+      const data=await request('/api/system/host/logs');
+      const labels={update_stdout:'升级后后台启动输出',update_stderr:'升级后后台启动错误',
+        restart_audit:'重启操作记录',restart_stdout:'最近重启标准输出',
+        restart_stderr:'最近重启标准错误',restart_bootstrap:'重启控制器错误'};
+      panel.textContent=Object.entries(data.logs||{}).map(([key,value])=>
+        '--- '+(labels[key]||key)+' ---\n'+(String(value||'').trim()||'无输出')).join('\n\n');
+    }catch(e){panel.textContent='后台日志获取失败：'+e.message;}
+  }
+  function finish(message,error=false){
+    restarting=false;
+    if(pending){clearInterval(pending);pending=null;}
+    if(by('hostRestartBtn'))by('hostRestartBtn').disabled=false;
+    if(message)updateText(message);
+    if(error)badge('重启异常',true);
+  }
+  async function poll(){
+    if(!restarting)return;
+    checks++;
+    try{
+      const info=await request('/api/system/host/status');
+      const op=info.restart||{};
+      if(op.attempt===attemptId&&op.state==='failed'){
+        finish('重启失败：'+(op.message||'请查看后台日志'),true);return;
+      }
+      if(op.attempt===attemptId&&op.state==='running'&&info.pid!==originalPid){
+        badge('重启成功');
+        finish('管理程序已重启，当前 PID '+info.pid+'；客户虚拟机仍保持原状态');
+        return;
+      }
+      updateText('管理程序正在重启：'+(op.message||'等待服务恢复…'));
+    }catch(e){updateText('管理端暂时断线，正在尝试重新连接…');}
+    if(checks>=50)finish('尚未确认重启结果。请刷新状态并查看后台日志，暂勿重复重启。',true);
+  }
+  async function restart(){
+    if(restarting)return;
+    if(!confirm('确定重启 VM Orchestrator 管理程序？\n\n网页和 Guest 网关会短暂断线；不关闭任何 VMware 虚拟机。运行中的管理任务可能被中断。'))return;
+    restarting=true;checks=0;
+    if(by('hostRestartBtn'))by('hostRestartBtn').disabled=true;
+    updateText('正在提交重启请求…');
+    try{
+      const original=await request('/api/system/host/status');
+      originalPid=original.pid;
+      const result=await request('/api/system/host/restart','POST',{confirm_restart:true});
+      attemptId=result.attempt;
+      updateText('重启请求已接收，正在等待管理程序重新上线…');
+      pending=setInterval(poll,3000);
+    }catch(e){finish('未能启动重启：'+e.message,true);}
+  }
+  window.VMOHostManage={load,logs};
+  window.addEventListener('DOMContentLoaded',()=>{
+    by('hostStatusRefreshBtn')?.addEventListener('click',load);
+    by('hostLogsBtn')?.addEventListener('click',logs);
+    by('hostRestartBtn')?.addEventListener('click',restart);
+  });
+})();
+
 /* ===== cleanup center; never infer deletability from a directory name ===== */
 (function(){
  'use strict';
