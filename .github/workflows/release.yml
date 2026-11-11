@@ -21,10 +21,19 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           $check = (Resolve-Path 'scripts/host/Test-GitHubUpdate.ps1').Path
-          $updater = (Resolve-Path 'scripts/host/Apply-GitHubUpdate.ps1').Path
-          & $ps51 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $check -UpdaterPath $updater
-          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell 5.1 -File preflight failed' }
-          Write-Host 'PASS: Windows PowerShell 5.1 direct script launch'
+          $source = (Resolve-Path 'scripts/host/Apply-GitHubUpdate.ps1').Path
+          # Match the production updater: it stages a UTF-8 BOM copy because
+          # Windows PowerShell 5.1 misreads UTF-8 source without BOM as ANSI.
+          $updater = Join-Path $env:RUNNER_TEMP 'VMO-staged-updater.ps1'
+          $updaterCode = [IO.File]::ReadAllText($source, [Text.Encoding]::UTF8)
+          [IO.File]::WriteAllText($updater, $updaterCode, [Text.UTF8Encoding]::new($true))
+          try {
+            & $ps51 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $check -UpdaterPath $updater
+            if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell 5.1 -File preflight failed' }
+            Write-Host 'PASS: Windows PowerShell 5.1 direct staged-script launch'
+          } finally {
+            Remove-Item -LiteralPath $updater -Force -ErrorAction SilentlyContinue
+          }
   release:
     needs: windows-preflight
     runs-on: ubuntu-latest
