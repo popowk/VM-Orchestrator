@@ -38,6 +38,7 @@ from .safety import assert_powered_off, assert_safe_vm_delete_dir, MAX_SNAPSHOTS
 from .unattend import provisioning_status, read_secret
 from .admin_auth import AdminAuth, AdminLoginLocked
 from .cleanup import CleanupManager, CleanupError
+from .host_metrics import read_host_metrics
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$')
 
@@ -474,6 +475,10 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
                                           confirm_backups=payload.confirm_backups)
         except CleanupError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get('/api/host/metrics', dependencies=[Depends(authorized)])
+    def host_metrics():
+        return read_host_metrics(Path(__file__).resolve().parent.parent, vms_root)
 
     @app.get('/api/host/capabilities', dependencies=[Depends(authorized)])
     def capabilities():
