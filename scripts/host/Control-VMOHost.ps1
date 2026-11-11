@@ -1,7 +1,6 @@
 # VMO Windows Host lifecycle controller (PowerShell 5.1).
 # Only stops a verified VMO Python service, never guest VMware processes.
 param(
-    [Parameter(Mandatory=$true)][ValidateSet('Restart','Stop')][string]$Action,
     [Parameter(Mandatory=$true)][ValidateRange(1,2147483647)][int]$HostPid,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{32}$')][string]$Attempt
 )
@@ -16,7 +15,7 @@ $stdoutName='host-console-' + $Attempt + '-out.log'
 $stderrName='host-console-' + $Attempt + '-err.log'
 
 function Write-State([string]$state,[string]$message) {
-    $record=@{state=$state; action=$Action.ToLowerInvariant(); attempt=$Attempt
+    $record=@{state=$state; action='restart'; attempt=$Attempt
        expected_pid=$HostPid; version=$version; message=$message
        at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
        stdout_file=$stdoutName; stderr_file=$stderrName}
@@ -66,10 +65,6 @@ try{
     Write-State 'stopping' 'Stopping only verified VMO Host; guest VMs remain running'
     Stop-Process -Id $HostPid -Force -ErrorAction Stop
     Wait-PortsClosed
-    if($Action -eq 'Stop'){
-        Write-State 'stopped' 'VMO Host stopped; run Start-VM-Orchestrator.cmd to start again'
-        exit 0
-    }
     Write-State 'starting' 'Launching new Host in background with independent console logs'
     Launch-Host
     $stable=0;$lastPid=0
