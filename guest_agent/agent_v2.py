@@ -94,6 +94,49 @@ def safe_path_fragment(path):
     return p.path + ('?'+p.query if p.query else '')
 
 
+
+def decode_command_output(raw: bytes) -> str:
+    """Decode Windows console bytes before transporting results as UTF-8 JSON.
+
+    cmd.exe and many native programs use the OEM code page (e.g. CP936),
+    while modern PowerShell scripts may use UTF-8 or UTF-16. Never replace
+    valid Chinese bytes with irreversible U+FFFD on first attempt.
+    """
+    if not raw:
+        return ''
+    if raw.startswith((b'\xff\xfe', b'\xfe\xff')):
+        return raw.decode('utf-16', errors='replace')
+    if raw.startswith(b'\xef\xbb\xbf'):
+        return raw.decode('utf-8-sig', errors='replace')
+    if raw.count(b'\x00') > len(raw) // 5:
+        try:
+            return raw.decode('utf-16le', errors='strict')
+        except UnicodeDecodeError:
+            pass
+    try:
+        return raw.decode('utf-8', errors='strict')
+    except UnicodeDecodeError as exc:
+        # Output truncation may bisect only the final UTF-8 character.
+        if exc.start >= len(raw) - 3 and exc.reason == 'unexpected end of data':
+            return raw.decode('utf-8', errors='replace')
+    encodings = []
+    if os.name == 'nt':
+        try:
+            import ctypes
+            code_page = int(ctypes.windll.kernel32.GetOEMCP())
+            if code_page > 0:
+                encodings.append('cp' + str(code_page))
+        except (OSError, AttributeError, ValueError):
+            pass
+    encodings.extend(('gb18030', 'cp936', 'mbcs', 'cp1252'))
+    for encoding in dict.fromkeys(encodings):
+        try:
+            return raw.decode(encoding, errors='strict')
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return raw.decode('utf-8', errors='replace')
+
+
 def execute_op(op,cfg,root,ctx):
     action=op.get('action');params=op.get('args') or {}
     if action=='DIAGNOSTIC':
@@ -240,8 +283,8 @@ def execute_op(op,cfg,root,ctx):
     res=subprocess.run(cmd,stdin=subprocess.DEVNULL,capture_output=True,timeout=timeout,
         cwd=str(params.get('cwd') or root) if action=='COMMAND' else str(root),shell=False,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     return {'exit_code':res.returncode,
-            'stdout':res.stdout[:20*1024].decode('utf-8',errors='replace'),
-            'stderr':res.stderr[:10*1024].decode('utf-8',errors='replace')}
+            'stdout':decode_command_output(res.stdout[:20*1024]),
+            'stderr':decode_command_output(res.stderr[:10*1024])}
 
 
 def run_live(config_path:Path,stop:threading.Event=None):
