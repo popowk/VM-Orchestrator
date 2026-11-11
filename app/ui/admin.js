@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.51 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.53 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -39,7 +39,23 @@ function setLogin(visible){
   $('loginScreen').hidden=!visible;
   if(visible){state.csrf='';VMOCloseEvents();$('loginError').textContent='';}
 } 
-function navigate(page){if(!pages[page])return;const previous=state.activePage;if(previous==='remote'&&page!=='remote')window.VMORemote?.stopPreview();state.activePage=page;if(page==='clients')window.VMOClients?.refresh();else if(page==='remote')window.VMORemote?.refresh();else if(page==='system')window.VMOSystemUpdate?.load();else if(page==='cleanup')window.VMOCleanup?.scan();else refresh();document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));$('pageTitle').textContent=pages[page];}
+function navigate(page){
+ if(!pages[page])return;
+ const previous=state.activePage;
+ if(previous==='remote'&&page!=='remote')window.VMORemote?.stopPreview();
+ state.activePage=page;
+ const url=new URL(window.location.href);
+ if(page==='overview')url.searchParams.delete('page');else url.searchParams.set('page',page);
+ window.history.replaceState(null,'',url.pathname+url.search+url.hash);
+ document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));
+ document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));
+ $('pageTitle').textContent=pages[page];
+ if(page==='clients')window.VMOClients?.refresh();
+ else if(page==='remote')window.VMORemote?.refresh();
+ else if(page==='system'){window.VMOSystemUpdate?.load();window.VMOHostManage?.load();}
+ else if(page==='cleanup')window.VMOCleanup?.scan();
+ else refresh();
+}
 async function refresh(){if(state.busy || !state.csrf)return;state.busy=true; try{
   const [tpl,vms,jobs,caps,defaults,guests,packages,updatesPaged,reinstalls,jobsPaged] = await Promise.all([
     request('/api/templates'),request('/api/vms'),request('/api/jobs'),request('/api/host/capabilities'),
@@ -628,7 +644,10 @@ window.addEventListener('DOMContentLoaded',async()=>{
      state.csrf=''; window.location.replace('/');
    } catch(e) { toast('退出登录未完成，请重试：'+e.message,true);$('adminShell').hidden=false; }
  });
- try{let r=await request('/ui/session');state.csrf=r.csrf;setLogin(false);await refresh();VMOConnectEvents();}catch(e){setLogin(true);}
+ try{let r=await request('/ui/session');state.csrf=r.csrf;setLogin(false);await refresh();VMOConnectEvents();
+    const requested=new URLSearchParams(window.location.search).get('page');
+    if(requested&&pages[requested])navigate(requested);
+  }catch(e){setLogin(true);}
  setInterval(()=>{if(!document.hidden&&state.csrf&&state.activePage!=='remote'&&state.activePage!=='clients')refresh();},7000);
 });
 
@@ -1268,13 +1287,11 @@ window.VMOSelfService=(()=>{
       setText('sysAvailability','已安装');
       setText('sysUpdateBadge','更新成功');
    }
-   // A cached success status alone never justifies a page reload.
+   // A version-label mismatch must not cause an infinite refresh loop.
+   // Users can refresh manually after a confirmed update; ?page=system persists.
    const loadedScript=document.querySelector('script[src*="/ui/admin.js"]');
    const loadedVer=loadedScript?.getAttribute('src')?.match(/[?&]v=([0-9.]+)/)?.[1];
-   if(confirmed && loadedVer && running!==loadedVer){
-      setText('sysProgress','已确认新版本服务，正在刷新页面…');
-      window.location.reload();return;
-   }
+   const staleBrowser=confirmed&&loadedVer&&running!==loadedVer;
    setText('sysAuth',data.configured_token?'已配置私有仓库令牌':'无令牌：只可访问公开的 Releases');
    const names={idle:'未开始',downloading:'下载中',verified:'校验通过',handoff:'启动独立更新器',preparing:'独立更新器已启动',stopping:'停止旧版服务',backing_up:'备份旧版程序',applying:'正在替换程序',restarting:'重新启动',hot_applying:'页面热更新中',unconfirmed:'等待人工确认',version_mismatch:'版本不一致',success:'已完成',failed:'更新失败',rolled_back:'已回滚'};
    setText('sysProgress',mismatch?
@@ -1283,6 +1300,9 @@ window.VMOSelfService=(()=>{
       (names[update.state]||update.state||'未开始')+' · '+
       (update.mode==='hot'?'[免重启] ':update.mode==='restart'?'[安全重启] ':'')+
       (update.message||'等待操作'));
+   if(staleBrowser)setText('sysProgress',
+     (document.getElementById('sysProgress')?.textContent||'')+
+     '。当前页面资源来自旧版本，请按 Ctrl+F5 刷新（会保留本页面）。');
    if(['downloading','verified','handoff','preparing','stopping','backing_up','applying','restarting','hot_applying'].includes(update.state)){
      busy=true;buttonState(); if(!timer)timer=setInterval(poll,2500);
    } else {
