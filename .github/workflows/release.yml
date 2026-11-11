@@ -88,19 +88,23 @@ jobs:
 
           print("PASS: historical success cannot mask a stale running service")
           PY
-      - name: Parse Windows PowerShell update script
+      - name: Parse Windows PowerShell service scripts
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            "scripts/host/Apply-GitHubUpdate.ps1", [ref]$tokens, [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            exit 1
+          foreach ($file in @('scripts/host/Apply-GitHubUpdate.ps1',
+                              'scripts/host/Test-GitHubUpdate.ps1',
+                              'scripts/host/Control-VMOHost.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file, [ref]$tokens, [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error ($file + ': ' + $_.Message) }
+              exit 1
+            }
+            Write-Host ("PASS: PowerShell parser accepted " + $file)
           }
-          Write-Host "PASS: PowerShell parser accepted updater"
       - name: Regression - PID zero and redacted WMI CommandLine
         shell: pwsh
         run: |

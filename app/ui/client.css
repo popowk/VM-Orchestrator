@@ -85,3 +85,6 @@
   .vmo-announcement-content{padding:19px;font-size:14px;line-height:1.85}
   .vmo-announcement-footer{padding:13px 19px;flex-wrap:wrap}
 }
+
+/* v1.4.53: show tenant-authorized command output as literal, bounded text. */
+.record-output{margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;max-height:190px;overflow:auto;font:12px/1.7 Consolas,monospace;color:#43546f;background:#f5f8fc;border:1px solid #e4eaf4;border-radius:8px;padding:8px 10px}.record-item:has(.failed) .record-output{color:#b8463e;background:#fff7f4;border-color:#f5e1dd}

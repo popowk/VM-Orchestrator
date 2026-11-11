@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.51 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.53 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -39,7 +39,23 @@ function setLogin(visible){
   $('loginScreen').hidden=!visible;
   if(visible){state.csrf='';VMOCloseEvents();$('loginError').textContent='';}
 } 
-function navigate(page){if(!pages[page])return;const previous=state.activePage;if(previous==='remote'&&page!=='remote')window.VMORemote?.stopPreview();state.activePage=page;if(page==='clients')window.VMOClients?.refresh();else if(page==='remote')window.VMORemote?.refresh();else if(page==='system')window.VMOSystemUpdate?.load();else if(page==='cleanup')window.VMOCleanup?.scan();else refresh();document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));$('pageTitle').textContent=pages[page];}
+function navigate(page){
+ if(!pages[page])return;
+ const previous=state.activePage;
+ if(previous==='remote'&&page!=='remote')window.VMORemote?.stopPreview();
+ state.activePage=page;
+ const url=new URL(window.location.href);
+ if(page==='overview')url.searchParams.delete('page');else url.searchParams.set('page',page);
+ window.history.replaceState(null,'',url.pathname+url.search+url.hash);
+ document.querySelectorAll('.page').forEach(n=>n.classList.toggle('active',n.id==='page-'+page));
+ document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));
+ $('pageTitle').textContent=pages[page];
+ if(page==='clients')window.VMOClients?.refresh();
+ else if(page==='remote')window.VMORemote?.refresh();
+ else if(page==='system'){window.VMOSystemUpdate?.load();window.VMOHostManage?.load();}
+ else if(page==='cleanup')window.VMOCleanup?.scan();
+ else refresh();
+}
 async function refresh(){if(state.busy || !state.csrf)return;state.busy=true; try{
   const [tpl,vms,jobs,caps,defaults,guests,packages,updatesPaged,reinstalls,jobsPaged] = await Promise.all([
     request('/api/templates'),request('/api/vms'),request('/api/jobs'),request('/api/host/capabilities'),
@@ -628,7 +644,10 @@ window.addEventListener('DOMContentLoaded',async()=>{
      state.csrf=''; window.location.replace('/');
    } catch(e) { toast('退出登录未完成，请重试：'+e.message,true);$('adminShell').hidden=false; }
  });
- try{let r=await request('/ui/session');state.csrf=r.csrf;setLogin(false);await refresh();VMOConnectEvents();}catch(e){setLogin(true);}
+ try{let r=await request('/ui/session');state.csrf=r.csrf;setLogin(false);await refresh();VMOConnectEvents();
+    const requested=new URLSearchParams(window.location.search).get('page');
+    if(requested&&pages[requested])navigate(requested);
+  }catch(e){setLogin(true);}
  setInterval(()=>{if(!document.hidden&&state.csrf&&state.activePage!=='remote'&&state.activePage!=='clients')refresh();},7000);
 });
 
@@ -1268,13 +1287,11 @@ window.VMOSelfService=(()=>{
       setText('sysAvailability','已安装');
       setText('sysUpdateBadge','更新成功');
    }
-   // A cached success status alone never justifies a page reload.
+   // A version-label mismatch must not cause an infinite refresh loop.
+   // Users can refresh manually after a confirmed update; ?page=system persists.
    const loadedScript=document.querySelector('script[src*="/ui/admin.js"]');
    const loadedVer=loadedScript?.getAttribute('src')?.match(/[?&]v=([0-9.]+)/)?.[1];
-   if(confirmed && loadedVer && running!==loadedVer){
-      setText('sysProgress','已确认新版本服务，正在刷新页面…');
-      window.location.reload();return;
-   }
+   const staleBrowser=confirmed&&loadedVer&&running!==loadedVer;
    setText('sysAuth',data.configured_token?'已配置私有仓库令牌':'无令牌：只可访问公开的 Releases');
    const names={idle:'未开始',downloading:'下载中',verified:'校验通过',handoff:'启动独立更新器',preparing:'独立更新器已启动',stopping:'停止旧版服务',backing_up:'备份旧版程序',applying:'正在替换程序',restarting:'重新启动',hot_applying:'页面热更新中',unconfirmed:'等待人工确认',version_mismatch:'版本不一致',success:'已完成',failed:'更新失败',rolled_back:'已回滚'};
    setText('sysProgress',mismatch?
@@ -1283,6 +1300,9 @@ window.VMOSelfService=(()=>{
       (names[update.state]||update.state||'未开始')+' · '+
       (update.mode==='hot'?'[免重启] ':update.mode==='restart'?'[安全重启] ':'')+
       (update.message||'等待操作'));
+   if(staleBrowser)setText('sysProgress',
+     (document.getElementById('sysProgress')?.textContent||'')+
+     '。当前页面资源来自旧版本，请按 Ctrl+F5 刷新（会保留本页面）。');
    if(['downloading','verified','handoff','preparing','stopping','backing_up','applying','restarting','hot_applying'].includes(update.state)){
      busy=true;buttonState(); if(!timer)timer=setInterval(poll,2500);
    } else {
@@ -1331,6 +1351,88 @@ window.VMOSelfService=(()=>{
  });
 })();
 
+
+
+/* ===== Verified Host restart and background log inspection (no Stop UI) ===== */
+(() => {
+  let restarting=false, originalPid=null, attemptId='', pending=null, checks=0;
+  const by=id=>document.getElementById(id);
+  const updateText=value=>{if(by('hostProcessStatus'))by('hostProcessStatus').textContent=value;};
+  function badge(message,error=false){
+    const node=by('hostProcessBadge');
+    if(node){node.textContent=message;node.className='pill '+(error?'bad':'ok');}
+  }
+  function show(info){
+    const op=info.restart||{};
+    if(!restarting)updateText('VMO 服务运行中 · PID '+(info.pid||'—')+
+      ' · 启动约 '+Math.floor((info.uptime_seconds||0)/60)+' 分钟'+
+      (op.message?' · 最近重启：'+op.message:''));
+    badge(info.running?'运行中':'未知',!info.running);
+  }
+  async function load(){
+    try{show(await request('/api/system/host/status'));}
+    catch(e){badge('读取失败',true);updateText('无法获取后台服务状态：'+e.message);}
+  }
+  async function logs(){
+    const panel=by('hostRuntimeLogs');
+    if(!panel)return;
+    panel.hidden=false;panel.textContent='正在读取后台日志…';
+    try{
+      const data=await request('/api/system/host/logs');
+      const labels={update_stdout:'升级后后台启动输出',update_stderr:'升级后后台启动错误',
+        restart_audit:'重启操作记录',restart_stdout:'最近重启标准输出',
+        restart_stderr:'最近重启标准错误',restart_bootstrap:'重启控制器错误'};
+      panel.textContent=Object.entries(data.logs||{}).map(([key,value])=>
+        '--- '+(labels[key]||key)+' ---\n'+(String(value||'').trim()||'无输出')).join('\n\n');
+    }catch(e){panel.textContent='后台日志获取失败：'+e.message;}
+  }
+  function finish(message,error=false){
+    restarting=false;
+    if(pending){clearInterval(pending);pending=null;}
+    if(by('hostRestartBtn'))by('hostRestartBtn').disabled=false;
+    if(message)updateText(message);
+    if(error)badge('重启异常',true);
+  }
+  async function poll(){
+    if(!restarting)return;
+    checks++;
+    try{
+      const info=await request('/api/system/host/status');
+      const op=info.restart||{};
+      if(op.attempt===attemptId&&op.state==='failed'){
+        finish('重启失败：'+(op.message||'请查看后台日志'),true);return;
+      }
+      if(op.attempt===attemptId&&op.state==='running'&&info.pid!==originalPid){
+        badge('重启成功');
+        finish('管理程序已重启，当前 PID '+info.pid+'；客户虚拟机仍保持原状态');
+        return;
+      }
+      updateText('管理程序正在重启：'+(op.message||'等待服务恢复…'));
+    }catch(e){updateText('管理端暂时断线，正在尝试重新连接…');}
+    if(checks>=50)finish('尚未确认重启结果。请刷新状态并查看后台日志，暂勿重复重启。',true);
+  }
+  async function restart(){
+    if(restarting)return;
+    if(!confirm('确定重启 VM Orchestrator 管理程序？\n\n网页和 Guest 网关会短暂断线；不关闭任何 VMware 虚拟机。运行中的管理任务可能被中断。'))return;
+    restarting=true;checks=0;
+    if(by('hostRestartBtn'))by('hostRestartBtn').disabled=true;
+    updateText('正在提交重启请求…');
+    try{
+      const original=await request('/api/system/host/status');
+      originalPid=original.pid;
+      const result=await request('/api/system/host/restart','POST',{confirm_restart:true});
+      attemptId=result.attempt;
+      updateText('重启请求已接收，正在等待管理程序重新上线…');
+      pending=setInterval(poll,3000);
+    }catch(e){finish('未能启动重启：'+e.message,true);}
+  }
+  window.VMOHostManage={load,logs};
+  window.addEventListener('DOMContentLoaded',()=>{
+    by('hostStatusRefreshBtn')?.addEventListener('click',load);
+    by('hostLogsBtn')?.addEventListener('click',logs);
+    by('hostRestartBtn')?.addEventListener('click',restart);
+  });
+})();
 
 /* ===== cleanup center; never infer deletability from a directory name ===== */
 (function(){

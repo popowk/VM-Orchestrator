@@ -141,7 +141,7 @@ function renderSelfHistory(payload){
  const items=Array.isArray(payload)?payload:(Array.isArray(payload?.items)?payload.items:[]);
  updateSelfActionControl();
  const list=items.slice(0,5);
- const sig=JSON.stringify(list.map(a=>[a.request_id,a.label,a.status,a.updated_at,a.outcome,a.failure_reason]));
+ const sig=JSON.stringify(list.map(a=>[a.request_id,a.label,a.status,a.updated_at,a.outcome,a.output_text]));
  if(selfHistorySignature===sig)return;
  selfHistorySignature=sig;
  const target=$('selfHistory');target.replaceChildren();
@@ -150,7 +150,7 @@ function renderSelfHistory(payload){
   const title=a.label||selfActionCatalog.find(x=>x.id===a.action_id)?.label||'历史自助操作';
   const body=element('div','','record-body');
   body.append(element('strong',title,'record-name'),element('small',bjtTime(a.updated_at||a.created_at,false),'record-time'));
-  if(a.failure_reason)body.append(element('small',a.failure_reason,'record-reason'));
+  if(a.output_text)body.append(element('div',a.output_text,'record-output'));
   const label=a.status==='SUCCEEDED'&&a.outcome==='START_ACCEPTED'?'已启动':(selfStatuses[a.status]||a.status||'未知');
   row.append(body,element('span',label,'record-state '+(a.status==='SUCCEEDED'?'success':a.status==='FAILED'?'failed':(['UNKNOWN','TIMED_OUT','VERIFY_REQUIRED'].includes(a.status)?'review':''))));
   target.append(row);
