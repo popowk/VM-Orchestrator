@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: write
@@ -127,7 +128,7 @@ jobs:
           if (-not $failed) { throw 'Non-VMO Python entrypoint must be rejected' }
           Write-Host 'PASS: zero PID and empty WMI CommandLine handled safely'
       - name: Regression - cleanup preview and delete guards
-        run: python -m unittest discover -s tests -p test_cleanup.py -v
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Confirm launcher does not pause
         shell: bash
         run: |
@@ -158,6 +159,7 @@ jobs:
       - name: Build release ZIP and SHA-256
         run: python tools/build_release.py
       - name: Publish only a new release version
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
