@@ -519,7 +519,7 @@ function renderFleet(){
    el('small','',`SHA256: ${p.sha256.slice(0,20)}… · ${Math.round(p.bytes/1024/1024*100)/100} MB`));
  if(isPortable&&profile){
    left.append(el('small','',`目标：C:\\dsh\\${profile.folder} · 启动：${profile.launcher}`),
-     el('small','',`识别：${profile.version_source||'auto'} · 提交后由 Guest 校验并识别 EXE / VERSION`));
+     el('small','',`本版本识别来源：${p.version_source||'auto'} · Guest 将独立核对 EXE / VERSION`));
  }
  const controls=el('div','snap-toolbar');const select=el('select');select.setAttribute('aria-label',`选择更新 ${p.product} 的客户虚拟机`);
  select.append(new Option(isPortable?'选择装有对应程序的客户机':p.product==='snowluma'?'选择在线客户虚拟机':'选择已配置适配器的虚拟机',''));
