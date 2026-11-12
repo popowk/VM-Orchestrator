@@ -283,7 +283,7 @@ class FleetStore:
             if not isinstance(installed,dict) or not any(
                    name.casefold()==profile['folder'].casefold() and isinstance(value,dict)
                    for name,value in installed.items()):
-                raise FleetError('客户机尚未上报 C:\dsh\'+profile['folder']+' 软件目录')
+                raise FleetError('客户机尚未上报 C:\\dsh\\'+profile['folder']+' 软件目录')
             if not agent['last_seen'] or (datetime.now(timezone.utc)-datetime.fromisoformat(agent['last_seen'])).total_seconds() > 600:
                 raise FleetError('Guest Agent 心跳已超出 10 分钟；请先恢复自动心跳')
             id_ = str(uuid.uuid4())
