@@ -259,7 +259,7 @@ async function openDiagnostics(vm) {
     const grid=el('div','detail-table');
     [['VMware 电源状态',statusName[d.power_state]||d.power_state],
      ['VMX 存在',d.vmx_exists?'是':'否'],
-     ['VMX 可独占打开',d.vmx_exclusive_open?'是':'否'],
+     ['VMX 可独占打开',d.vmx_probe_skipped?'未检测（电源/挂起保护）':d.vmx_exclusive_open?'是':'否'],
      ['锁标记',d.lock_markers.length?d.lock_markers.join(', '):'无'],
      ['挂起文件',d.suspend_files.length?d.suspend_files.join(', '):'无'],
      ['VMX 离线编辑',d.offline_vmx_edit_possible?'允许尝试':'不允许'],
@@ -269,6 +269,12 @@ async function openDiagnostics(vm) {
     if(d.warning)body.append(el('p','warning',d.warning));
     const row=el('div','snap-toolbar');
     row.append(btn('重新诊断','ghost',()=>openDiagnostics(vm)));
+    if(d.power_state==='SUSPENDED'&&vm.state==='READY'){
+      row.append(btn('恢复运行','primary',async()=>{
+        await vmAction(vm,'start');
+        if($('vmDialog').open)$('vmDialog').close();
+      }));
+    }
     body.append(row);
   } catch(e) {body.replaceChildren(el('p','warning','诊断失败：'+e.message));}
 }
