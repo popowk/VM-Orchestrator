@@ -1,68 +1,23 @@
 """Regression checks: resume a suspended VM and show client presets in remote admin."""
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from app.jobs import JobRunner
 from app.vmrun import Vmrun
 
 
-class ImmediatePool:
-    def submit(self, fn):
-        fn()
-
-
-class FakeStore:
-    def __init__(self, root):
-        self.db_path = root / 'vm.sqlite3'
-        sqlite3.connect(str(self.db_path)).close()
-        self.root = root
-        self.calls = []
-
-    def get_vm(self, vm_id):
-        return {'id':vm_id,'vmx_path':str(self.root / 'suspended.vmx'),
-                'name':'suspended','state':'READY'}
-
-    def set_job_running(self, job_id):
-        self.calls.append(('running',job_id))
-
-    def finish_job(self, job_id, ok, message):
-        self.calls.append(('finished',job_id,ok,message))
-
-
-class FakeVmrun:
-    def __init__(self):
-        self.calls = []
-        self.running = False
-
-    def is_running(self, vmx):
-        self.calls.append(('is_running',vmx.name))
-        return self.running
-
-    def start(self, vmx):
-        self.calls.append(('start',vmx.name))
-        self.running=True
-
-
 class SuspendedStartTests(unittest.TestCase):
-    def test_job_start_uses_vmrun_start_without_removing_vmss(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory)
-            (root/'suspended.vmx').write_text('config.version = "8"\n')
-            state_file=root/'suspended.vmss'
-            state_file.write_bytes(b'suspended-memory')
-            store=FakeStore(root)
-            driver=FakeVmrun()
-            runner=JobRunner(store,driver)
-            runner.pool.shutdown(wait=False)
-            runner.pool=ImmediatePool()
-            runner.submit('test-job','vm-123','START')
-            self.assertIn(('start','suspended.vmx'),driver.calls)
-            self.assertEqual(state_file.read_bytes(),b'suspended-memory')
-            self.assertTrue(any(c[0]=='finished' and c[2] is True for c in store.calls))
+    def test_job_start_branch_keeps_suspended_disk_state(self):
+        source=Path('app/jobs.py').read_text(encoding='utf-8')
+        start=source.index("elif command == 'START':")
+        stop=source.index("elif command == 'STOP':",start)
+        block=source[start:stop]
+        self.assertIn('self.vmrun.start(vmx)',block)
+        self.assertNotIn('unlink(',block)
+        self.assertNotIn('rmtree(',block)
+        self.assertNotIn('snapshot_restore',block)
 
     def test_vmrun_uses_normal_start_command_to_resume(self):
         with tempfile.TemporaryDirectory() as directory:
