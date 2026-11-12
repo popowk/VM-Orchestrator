@@ -153,6 +153,10 @@ class PortableCatalog:
                 launcher TEXT NOT NULL, version_file TEXT NOT NULL DEFAULT '',
                 version_source TEXT NOT NULL DEFAULT 'auto', version_override TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+            d.execute('''CREATE TABLE IF NOT EXISTS portable_package_meta (
+                package_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL,
+                version_source TEXT NOT NULL, version_file TEXT NOT NULL,
+                uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
             d.execute('CREATE UNIQUE INDEX IF NOT EXISTS portable_profiles_folder ON portable_profiles(folder COLLATE NOCASE)')
 
     @contextmanager
@@ -184,6 +188,13 @@ class PortableCatalog:
                  profile['launcher'], profile['version_file'],
                  profile['version_source'], profile['version_override']))
         return profile
+
+    def record_package(self, package_id: str, profile: dict):
+        with self._db() as d:
+            d.execute('''INSERT INTO portable_package_meta
+                (package_id,profile_id,version_source,version_file) VALUES(?,?,?,?)''',
+                (package_id, profile['id'], profile['version_source'],
+                 profile['version_file']))
 
     def get(self, profile_id: str) -> dict | None:
         with self._db() as d:
