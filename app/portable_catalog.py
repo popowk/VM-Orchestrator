@@ -55,6 +55,14 @@ def profile_id_for(folder: str) -> str:
     return 'p-' + hashlib.sha256(folder.casefold().encode('utf-8')).hexdigest()[:20]
 
 
+def _hash_archive(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda:stream.read(1024*1024), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
 def _read_small(archive: zipfile.ZipFile, name: str, size: int = 32768) -> str:
     member = archive.getinfo(name)
     if member.file_size > size:
@@ -85,7 +93,7 @@ def _extract_version(archive: zipfile.ZipFile, folder: str, custom_file: str) ->
 
 
 def inspect_zip(archive_file: Path, launcher: str, *, display_name: str,
-                version_override: str = '', version_file: str = '') -> dict:
+                version_override: str = '', version_file: str = '', sha256: str = '') -> dict:
     if not isinstance(display_name, str) or not (1 <= len(display_name.strip()) <= 70):
         raise PortableCatalogError('请填写软件名称（不超过70个字符）')
     launcher = relative_file(launcher)
@@ -103,7 +111,7 @@ def inspect_zip(archive_file: Path, launcher: str, *, display_name: str,
             for entry in members:
                 item = entry.filename.replace('\\','/').rstrip('/')
                 components = item.split('/')
-                if len(components) < 2:
+                if len(components) < 2 and not entry.is_dir():
                     raise PortableCatalogError('ZIP 只能包含一个顶层程序文件夹，不允许根目录散放文件')
                 for piece in components:
                     folder_name(piece) if piece == components[0] else relative_file(piece)
@@ -134,7 +142,7 @@ def inspect_zip(archive_file: Path, launcher: str, *, display_name: str,
                 version, source = detected, 'zip:' + evidence
             else:
                 # An opaque build fingerprint is NOT a verified application version.
-                version, source = 'build-' + hashlib.sha256(archive_file.read_bytes()).hexdigest()[:12], 'zip_sha256'
+                version, source = 'build-' + (sha256 or _hash_archive(archive_file))[:12], 'zip_sha256'
             return {'id': profile_id_for(folder),
                     'display_name': display_name.strip(), 'folder': folder, 'launcher': launcher,
                     'version': version, 'version_source': source,
