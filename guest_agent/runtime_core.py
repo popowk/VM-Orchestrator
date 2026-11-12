@@ -1,7 +1,7 @@
 """VMO Guest Agent V2 runtime utilities. No V1 scheduled task or polling loop.
 
 Does not run arbitrary host-provided commands. Software updates require locally
-approved install adapters, a host-approved immutable ZIP, and SHA-256 matching.
+a Host-reviewed single-folder C-dsh ZIP catalog and SHA-256 matching.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -28,7 +28,6 @@ import zipfile
 
 MAX_PACKAGE_BYTES = 512 * 1024 * 1024
 MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024
-DEFAULT_PRESERVE = {'data','config','profiles','credentials','logs','soul.db','fish-soul-config.json'}
 
 
 def atomic_json(path: Path, data: dict):
@@ -64,7 +63,7 @@ def safe_extract_zip(zpath: Path, dest: Path):
             if (i.external_attr >> 16) & 0o170000 == stat.S_IFLNK:
                 raise RuntimeError('Archive contains symlink')
             names.append(p)
-        # Standard SnowLuma release ZIPs may wrap files in one top-level folder.
+        # The required portable ZIP wraps files in its single program folder.
         strip = len({p.parts[0] for p in names})==1 and all(len(p.parts)>1 for p in names)
         for i,p in zip(infos,names):
             rel = Path(*p.parts[1:]) if strip else p
@@ -76,213 +75,55 @@ def safe_extract_zip(zpath: Path, dest: Path):
                 shutil.copyfileobj(inp,out)
 
 
-def portable_update(config: dict, zip_path: Path, task_id: str, version: str, base_dir: Path):
-    """Atomic directory swap; preserve customer data from existing program tree.
-
-    Stop the app before execution. Old installation is retained for rollback.
-    """
-    program = Path(config['program_dir']).resolve()
-    if not program.is_dir() or program.is_symlink(): raise RuntimeError('Configured portable program directory missing')
-    if program == Path(program.anchor) or program.name.lower() in {'windows','users','program files','program files (x86)','programdata','system32'}:
-        raise RuntimeError('Refusing system/root program directory')
-    if any(program == base_dir.resolve() or base_dir.resolve() in program.parents for _ in [0]):
-        raise RuntimeError('Guest Agent directory cannot be updated')
-    for name in config.get('stop_process_names', []):
-        if not isinstance(name,str) or len(name)>100 or not name.isascii() or not name.replace('.','').replace('-','').isalnum():
-            raise RuntimeError('Invalid process name')
-        if os.name=='nt':
-            p=subprocess.run(['tasklist','/FI',f'IMAGENAME eq {name}'],capture_output=True,text=True,timeout=15)
-            if name.lower() in p.stdout.lower(): raise RuntimeError(f'Stop {name} before updating')
-    parent=program.parent
-    staging=parent / ('.vmo-stage-'+task_id)
-    backup=parent / ('.vmo-backup-'+program.name+'-'+task_id)
-    if staging.exists() or backup.exists(): raise RuntimeError('An update staging path already exists')
-    # Copy complete existing state: this leaves login data, configs and memory untouched.
-    shutil.copytree(program,staging,symlinks=False)
-    extracted = base_dir / 'working' / task_id
-    extracted.mkdir(parents=True,exist_ok=False)
-    try:
-        safe_extract_zip(zip_path,extracted)
-        preserved = set(DEFAULT_PRESERVE) | {p.lower() for p in config.get('preserve_relative', [])}
-        for file in extracted.rglob('*'):
-            if not file.is_file(): continue
-            rel=file.relative_to(extracted)
-            if any(segment.lower() in preserved for segment in rel.parts):
-                continue
-            dst=staging / rel
-            dst.parent.mkdir(parents=True,exist_ok=True)
-            shutil.copy2(file,dst)
-        for path in config.get('required_files', []):
-            if not (staging / path).is_file(): raise RuntimeError('Updated program missing expected file '+path)
-        # Rename within a filesystem: no removal of the original until staged copy is complete.
-        os.replace(program,backup)
-        try:
-            os.replace(staging,program)
-        except BaseException:
-            os.replace(backup,program)
-            raise
-        # Persist backup for a deliberate rollback; never auto-delete customer files.
-        return {'backup':str(backup),'version':version,'note':'Portable files replaced; customer data preserved; restart and verify application manually'}
-    finally:
-        shutil.rmtree(extracted,ignore_errors=True)
-        if staging.exists(): shutil.rmtree(staging,ignore_errors=True)
-
-
-def cli_update(config: dict, product: str, version: str, root: Path):
-    """Explicit local opt-in. Never run command or arguments supplied by API."""
-    mode=config.get('mode')
-    if os.name=='nt' and not config.get('allow_machine_scoped_cli',False):
-        raise RuntimeError('CLI updater is disabled by default: Guest Agent runs as SYSTEM, which is not the DSH desktop user')
-    if product=='fish-soul' and mode=='dsh_plugin':
-        exe=Path(config['dsh_executable'])
-        profile=config.get('profile','local-dsh')
-        if not profile.replace('-','').replace('_','').isalnum(): raise RuntimeError('Unsafe DSH profile')
-        command=[str(exe),'plugin','--profile',profile,'add','dsh-fish-soul@'+version]
-    elif product=='dsh' and mode=='npm_global':
-        exe=Path(config['npm_executable'])
-        command=[str(exe),'install','--global','@deepseek-ai/dsh@'+version]
-    else:
-        raise RuntimeError('No approved update adapter configured for this installation')
-    if not exe.is_file(): raise RuntimeError('Configured updater executable missing')
-    backup_paths=config.get('backup_paths',[])
-    if not isinstance(backup_paths,list) or not backup_paths:
-        raise RuntimeError('CLI update requires explicit backup_paths; refusing to risk DSH data')
-    backups=root/'backups'/('cli-'+product+'-'+uuid.uuid4().hex)
-    backups.mkdir(parents=True,exist_ok=False)
-    for ix,raw in enumerate(backup_paths):
-        src=Path(raw).resolve()
-        if not src.exists() or src.is_symlink() or not src.is_absolute() or src==Path(src.anchor):
-            raise RuntimeError('Invalid CLI backup source; refusing update')
-        dest=backups/str(ix)
-        if src.is_dir(): shutil.copytree(src,dest,symlinks=False)
-        else: shutil.copy2(src,dest)
-    # Only explicitly configured local executable; no shell or arbitrary command strings.
-    result=subprocess.run(command,capture_output=True,text=True,timeout=900,check=False,shell=False)
-    if result.returncode: raise RuntimeError(f'Approved {product} updater failed with exit code {result.returncode}; backup: {backups}')
-    return {'backup':str(backups),'note':'Pinned CLI package installed; check program health and use prior pinned release if rollback is required'}
-
-
 def safe_update_failure(exc: Exception) -> str:
-    """Never echo arbitrary vendor output, paths, access tokens or user settings."""
-    msg=str(exc).split(';',1)[0].strip()
-    allowed={
-        'LOCAL_MANAGED_LIFECYCLE_NOT_CONFIGURED','INVALID_MANAGED_LISTEN_PORT',
-        'INVALID_MANAGED_HEALTH_URL','LOCAL_RESTART_TASK_NOT_FOUND',
-        'SCHEDULED_START_TASK_FAILED','APP_HEALTH_TIMEOUT_AFTER_RESTART',
-        'UPDATE_PACKAGE_MISSING_REQUIRED_FILES','STAGED_INSTALLATION_INCOMPLETE',
-        'INSTALLATION_CONTAINS_LINKS','UNSAFE_PROGRAM_DIRECTORY',
-        'UPDATE_FAILED_AND_ROLLBACK_NEEDS_MANUAL_RECOVERY',
-        'DSH_DESKTOP_STILL_RUNNING','DSH_DESKTOP_VERSION_MISMATCH',
-        'DSH_INSTALLER_NONZERO_EXIT','INSTALLER_SIGNER_NOT_TRUSTED_OR_SIGNATURE_INVALID',
-        'TARGET_WINDOWS_USER_SID_REQUIRED','REAL_DSH_PLUGIN_PACKAGE_NAME_REQUIRED',
-        'DSH_PLUGIN_UPDATE_FAILED','DSH_CLI_NOT_FOUND',
-        'LOCAL_BACKUP_PATHS_REQUIRED','CANNOT_GRANT_STAGED_INSTALLER_READ_ACCESS',
-        'NO_INTERACTIVE_USER_LOGGED_ON','ACTIVE_USER_SID_DOES_NOT_MATCH_LOCAL_ADAPTER',
-        'APP_STILL_LISTENING_AFTER_TASK_END','LOCAL_DESKTOP_INSTALLER_CONSENT_REQUIRED',
-        'LOCAL_PLUGIN_UPDATE_CONSENT_REQUIRED','DSH_RESTART_TASK_FAILED',
-        'USER_UPDATE_TIMEOUT_OUTCOME_REQUIRES_REVIEW',
-        'ROLLBACK_FAILED_MANUAL_RECOVERY_REQUIRED',
-        'ROLLBACK_HEALTH_CHECK_FAILED_ORIGINAL_RESTORED',
+    """Allow only fixed, non-secret error codes from the portable updater."""
+    value=str(exc).split(';',1)[0].strip()
+    permitted={
+        'LEGACY_UPDATE_DISABLED','LEGACY_ROLLBACK_DISABLED',
+        'PORTABLE_LOCAL_INSTALL_NOT_FOUND','PORTABLE_BASE_DIRECTORY_MISSING',
+        'PORTABLE_EXISTING_PROGRAM_CONTAINS_LINKS','PORTABLE_PROGRAM_FOLDER_INVALID',
+        'PORTABLE_ZIP_ROOT_MISMATCH','PORTABLE_ZIP_LAUNCHER_MISSING',
+        'PORTABLE_EXTRACTED_CONTENT_INVALID','PORTABLE_STAGE_VALIDATION_FAILED',
+        'PORTABLE_INSTALLED_VERSION_MISMATCH','PORTABLE_PROCESS_INSPECTION_OR_STOP_FAILED',
+        'PORTABLE_RESTART_NOT_RUNNING','PORTABLE_ROLLBACK_REQUIRES_MANUAL_RECOVERY',
+        'PORTABLE_ORIGINAL_RESTART_FAILED','PORTABLE_PROGRAM_STILL_RUNNING',
+        'PORTABLE_PREVIOUS_UPDATE_FILES_EXIST','PORTABLE_PROCESS_RESULT_INVALID',
+        'PORTABLE_WINDOWS_GUEST_ONLY','PORTABLE_PROCESS_HELPER_NOT_INSTALLED',
+        'PORTABLE_LAUNCHER_OR_VERSION_INVALID','PORTABLE_UPDATE_TASK_ID_INVALID'
     }
-    return msg if msg in allowed else type(exc).__name__
+    return value if value in permitted else type(exc).__name__
 
 
 def perform_update(task: dict, config: dict, root: Path, ctx, on_phase=None):
-    prod=task['product']
-    cfg=config.get('installations',{}).get(prod,{})
-    opts=task.get('options') or {}
-    if not isinstance(opts,dict):raise RuntimeError('INVALID_UPDATE_OPTIONS')
-    mode=cfg.get('mode','disabled')
-    if task.get('kind')=='PLUGIN_COMMAND':
-        if prod!='fish-soul' or not isinstance(opts.get('command'),str):
-            raise RuntimeError('INVALID_PLUGIN_UPDATE_TASK')
-        try:from .quick_plugin_update import execute_plugin_command
-        except ImportError:from quick_plugin_update import execute_plugin_command
-        result=execute_plugin_command(opts['command'],task['version'],root,on_phase=on_phase)
-        # An exit-0 command is not a verified product version. Do not write
-        # installed_versions based solely on the requested version.
-        return result
-    if opts.get('mode')=='snowluma_direct' and prod=='snowluma':
-        mode='snowluma_direct'
-    if prod.startswith('portable-p-') and opts.get('mode')=='portable_catalog':
-        mode='portable_catalog'
-    if mode=='disabled': raise RuntimeError(f'{prod}: installation adapter has not been configured on this guest')
-    version=task['version']
-    if not version or not all(ch.isalnum() or ch in '.-_+' for ch in version):
-        raise RuntimeError('Unsafe version')
+    """Only immutable, pinned C:\dsh single-directory ZIP releases are accepted."""
+    options=task.get('options') or {}
+    if (task.get('kind')!='UPDATE' or
+        not re.fullmatch(r'portable-p-[0-9a-f]{20}',task.get('product','')) or
+        not isinstance(options,dict) or options.get('mode')!='portable_catalog'):
+        raise RuntimeError('LEGACY_UPDATE_DISABLED')
+    version=task.get('version','')
+    if not version or len(version)>40 or not all(x.isalnum() or x in '.-_+' for x in version):
+        raise RuntimeError('PORTABLE_LAUNCHER_OR_VERSION_INVALID')
     headers={'X-Agent-ID':config['agent_id'],'X-Agent-Key':config['agent_key']}
-    content=api(config['server_url'],f"/agent/artifacts/{task['package_id']}",headers=headers,ssl_context=ctx,binary=True)
+    content=api(config['server_url'],f"/agent/artifacts/{task['package_id']}",
+                headers=headers,ssl_context=ctx,binary=True)
     if on_phase:on_phase('downloaded')
-    checksum=hashlib.sha256(content).hexdigest()
-    if checksum.lower()!=task['sha256'].lower(): raise RuntimeError('Package SHA-256 mismatch')
+    if hashlib.sha256(content).hexdigest().lower()!=task['sha256'].lower():
+        raise RuntimeError('Package SHA-256 mismatch')
     root.mkdir(parents=True,exist_ok=True)
-    archive=root / ('download-'+task['id']+'.zip')
+    archive=root/('download-'+task['id']+'.zip')
     archive.write_bytes(content)
     try:
-        if mode=='portable_catalog':
-            try: from .portable_software import update_portable
-            except ImportError: from portable_software import update_portable
-            result=update_portable(opts,archive,task['id'],version,root,
-                                   extractor=safe_extract_zip,on_phase=on_phase)
-        elif mode=='snowluma_direct':
-            try:from .quick_updates import direct_snowluma_update
-            except ImportError:from quick_updates import direct_snowluma_update
-            result=direct_snowluma_update(opts,archive,task['id'],version,root,extractor=safe_extract_zip,on_phase=on_phase)
-        elif mode=='portable_managed':
-            try:from .update_lifecycle import managed_portable_update
-            except ImportError:from update_lifecycle import managed_portable_update
-            result=managed_portable_update(cfg,archive,task['id'],version,root,extractor=safe_extract_zip,on_phase=on_phase)
-        elif mode=='portable':
-            result=portable_update(cfg,archive,task['id'],version,root)
-        elif mode=='dsh_plugin_user' and prod=='fish-soul':
-            try:from .dsh_updates import plugin_user_update
-            except ImportError:from dsh_updates import plugin_user_update
-            result=plugin_user_update(cfg,version,root)
-        elif mode=='desktop_installer' and prod=='dsh':
-            try:from .dsh_updates import desktop_installer_update
-            except ImportError:from dsh_updates import desktop_installer_update
-            result=desktop_installer_update(cfg,archive,task['id'],version,root,safe_extract_zip)
-        elif mode in {'dsh_plugin','npm_global'}:
-            # ZIP acts as the approved pinned-version record; the CLI's registry download
-            # is separate and requires explicit local trusted mode.
-            result=cli_update(cfg,prod,version,root)
-        else: raise RuntimeError('Unknown local adapter')
+        try:from .portable_software import update_portable
+        except ImportError:from portable_software import update_portable
+        result=update_portable(options,archive,task['id'],version,root,
+                               extractor=safe_extract_zip,on_phase=on_phase)
     finally:
         archive.unlink(missing_ok=True)
     if on_phase:on_phase('verified')
-    # An HTTP listener or command exit is not proof of the newly running version.
-    # Only persist a confirmed version for the simplified SnowLuma workflow.
-    if mode!='portable_catalog' and not (isinstance(result,dict) and result.get('runtime_version_api')=='not_verified'):
-        config.setdefault('installed_versions',{})[prod]=version
+    # Guest portable app's reported version is computed from real filesystem
+    # evidence; don't write the requested version as if independently confirmed.
     return result
-
-
-def perform_rollback(task: dict, config: dict):
-    prod=task['product']
-    cfg=config.get('installations',{}).get(prod,{})
-    if cfg.get('mode') not in ('portable','portable_managed'):
-        raise RuntimeError('Rollback is only supported for portable ZIP installs')
-    origin=task.get('reference_id','')
-    if not isinstance(origin,str) or not origin or not all(c in '0123456789abcdef-' for c in origin):
-        raise RuntimeError('Invalid rollback reference')
-    if cfg.get('mode')=='portable_managed':
-        try:from .update_lifecycle import managed_portable_rollback
-        except ImportError:from update_lifecycle import managed_portable_rollback
-        return managed_portable_rollback(cfg,origin,task['id'],Path(cfg['program_dir']).parent)
-    program=Path(cfg['program_dir']).resolve()
-    old=program.parent/('.vmo-backup-'+program.name+'-'+origin)
-    current_backup=program.parent/('.vmo-pre-rollback-'+program.name+'-'+task['id'])
-    if not program.is_dir() or not old.is_dir() or current_backup.exists():
-        raise RuntimeError('Known rollback backup missing or application no longer installed')
-    # Preserving current data is intentional: rollback does not erase current state.
-    os.replace(program,current_backup)
-    try:
-        os.replace(old,program)
-    except BaseException:
-        os.replace(current_backup,program)
-        raise
-    return {'previous_install_backup':str(current_backup),
-            'note':'Portable program rolled back. Review login/session data, compatibility and restart manually.'}
 
 
 def oobe_evidence(config: dict) -> dict:
