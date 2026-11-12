@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.55"></script>
+<script src="/ui/app-route-recover.js?v=1.4.56"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.55">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.56">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.55" defer></script>
+<script src="/ui/admin.js?v=1.4.56" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -122,7 +122,13 @@
     <section class="page" id="page-updates">
       <section class="panel">
         <div class="panel-head"><div><h2>Guest Agent 与软件版本</h2><p>每台 Windows 独立注册、心跳和版本上报。Host Agent 默认仍仅本机管理；Guest 网关须单独启用 HTTPS。</p></div></div>
-        <div id="guestList" class="table-wrap"><div class="muted">载入中...</div></div>
+        <div class="software-inventory-tools">
+          <input id="softwareGuestSearch" type="search" placeholder="搜索客户机名称、IP 或程序" aria-label="搜索客户机" autocomplete="off">
+          <select id="softwareGuestFilter" aria-label="筛选 Guest 状态"><option value="all">全部客户机</option><option value="online">在线</option><option value="offline">离线</option><option value="unregistered">未注册</option></select>
+          <span id="softwareGuestCount" class="muted" role="status"></span>
+        </div>
+        <div id="guestList" class="software-guest-list"><div class="muted">载入中...</div></div>
+        <div class="toolbar software-guest-pager"><button id="softwareGuestPrev" type="button" class="btn ghost small">上一页</button><span id="softwareGuestPage" class="muted"></span><button id="softwareGuestNext" type="button" class="btn ghost small">下一页</button></div>
       </section>
       <section class="panel">
         <div class="panel-head"><div><h2>便携程序 · 一键自动更新</h2><p>自动读取客户机 C:\dsh 下的软件目录。上传 ZIP，只需填写软件名称及启动文件；ZIP 顶层文件夹即安装目录。更新前记录运行状态，若原来未启动，更新后保持关闭。</p></div></div>
@@ -142,26 +148,8 @@
         </form>
         <div class="divider"></div>
         <div class="panel-head"><div><h2>软件版本库与更新下发</h2><p>选择单台或符合条件的全部在线客户机更新。Guest Agent 需要 v2.0.25 以上；更新后恢复原先运行或关闭状态。</p></div></div>
-        <div id="packageList" class="table-wrap"></div>
-        <details class="panel" style="margin-top:18px"><summary>高级兼容：旧版 DSH 签名安装器与 SnowLuma 专用更新包</summary>
-          <p class="muted">旧版适配器需要客户机单独配置；建议优先使用统一 ZIP 更新方式。</p>
-        <form id="uploadForm" class="form-grid">
-          <label>旧版适配器<select id="packageProduct"><option value="dsh">DSH（签名安装器）</option><option value="snowluma">SnowLuma（专用更新）</option></select></label>
-          <label>目标版本<input id="packageVersion" required placeholder="1.2.3" maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._+-]{0,39}"></label>
-          <label class="wide">审核过的 ZIP<input type="file" id="packageFile" accept=".zip,application/zip" required></label>
-          <div class="form-submit"><button type="submit" class="btn ghost">提交旧版适配器更新包</button></div>
-        </form>
-        </details>
-      </section>
-      <section class="panel">
-        <div class="panel-head"><div><h2>DSH 插件 · PowerShell 更新</h2><p>不需要上传 ZIP。在已登录 Windows 用户的 DSH Profile 中执行一条插件命令。建议使用固定版本的 add 命令；update 命令不一定能证明实际安装版本。</p></div></div>
-        <form id="pluginCommandForm" class="form-grid">
-          <label>客户虚拟机<select id="pluginVm" required><option value="">选择在线客户机</option></select></label>
-          <label>目标版本<input id="pluginVersion" placeholder="例如 0.15.6" maxlength="40" required></label>
-          <label class="wide">PowerShell 更新命令<input id="pluginCommand" autocomplete="off" spellcheck="false" placeholder="dsh plugin --profile desktop add @scope/package@0.15.6" required maxlength="1024"></label>
-          <p class="muted wide">仅允许单条 DSH plugin update/add 命令，不支持管道、拼接脚本或普通 PowerShell。命令在已登录 Windows 用户下运行，成功退出不代表插件已正确加载。</p>
-          <div class="form-submit"><button type="submit" class="btn primary">下发插件命令更新</button></div>
-        </form>
+        <div id="packageList" class="software-package-list"></div>
+        <p class="muted" id="portableReleaseHint">版本包默认收起，点击软件名称展开可选择客户机、批量下发或删除。</p>
       </section>
       <section class="panel"><div class="panel-head"><div><h2>软件更新任务</h2><p>展示停止程序、文件切换、启动检查和版本核验等阶段；结果未知的安装任务不会自动重复执行。</p></div></div><div id="updateTaskList" class="table-wrap"></div><div id="updatesPager" class="pager"></div></section>
       <section class="panel"><div class="panel-head"><div><h2>系统重装记录</h2><p>旧系统备份保存在 Customers/.vmo-reinstall-backups，不会随升级包清除。</p></div></div><div id="reinstallHistory" class="table-wrap"></div></section>
@@ -409,16 +397,6 @@
 </dialog>
 <div class="login-screen" id="loginScreen" hidden><form class="login-box" id="loginForm"><div class="brand-icon big">V</div><h2>连接 VM 管理后台</h2><label>密码<input id="loginKey" type="password" autocomplete="current-password" required placeholder="密码"></label><button class="btn primary full" type="submit">进入控制台</button><div id="loginError" class="error-text" role="alert"></div></form></div>
 <dialog id="vmDialog" class="dialog"><div class="dialog-head"><div><h2 id="dialogTitle">虚拟机</h2><p id="dialogSub"></p></div><button class="icon-btn" id="dialogClose" aria-label="关闭">×</button></div><div id="dialogBody"></div></dialog>
-<dialog id="testDialog" class="dialog"><div class="dialog-head"><div><h2>一键自动验收</h2><p id="testVmName"></p></div><button class="icon-btn" id="testClose" aria-label="关闭">×</button></div>
- <form id="testForm" class="test-form"><p class="warning">仅限已关机、可丢弃的测试虚拟机。会操作真实 VMware 快照；建议先备份重要数据。</p>
-  <label class="check-row"><input type="checkbox" id="testConfirmed" required><span><b>确认这是专用测试 VM</b><small>当前 VM 非生产客户实例，允许创建和删除临时快照</small></span></label>
-  <label class="check-row"><input type="checkbox" id="testPower" checked><span><b>测试启动和软关机</b><small>需要 VMware Tools；首次开机可能执行 Windows 初始化</small></span></label>
-  <label class="check-row"><input type="checkbox" id="testRestore"><span><b>同时测试恢复快照</b><small>恢复刚创建的临时快照，仍可能影响快照树及后续更改</small></span></label>
-  <label class="check-row" id="restoreConfirmRow" hidden><input type="checkbox" id="testRestoreConfirm"><span><b>明确确认恢复快照的数据风险</b><small>仅能在可丢弃的测试 VM 上使用</small></span></label>
-  <div class="dialog-actions"><button class="btn ghost" type="button" id="testCancel">取消</button><button class="btn primary" type="submit">开始后台验收</button></div>
- </form>
-</dialog>
-<dialog id="screenDialog" class="dialog screen-dialog"><div class="dialog-head"><div><h2 id="screenTitle">虚拟机屏幕</h2><p>首次开机、黑屏与 OOBE 画面查看</p></div><button class="icon-btn" id="screenClose" aria-label="关闭">×</button></div><p class="snap-hint" id="screenStatus" role="status">点击刷新抓取单帧</p><img id="screenImage" alt="虚拟机当前屏幕截图" hidden><div class="dialog-actions"><button class="btn primary" id="screenRefresh" type="button">↻ 刷新画面</button></div></dialog>
 <dialog id="reinstallDialog" class="dialog"><div class="dialog-head"><div><h2>从黄金模板重装系统</h2><p id="reinstallTarget"></p></div><button class="icon-btn" id="reinstallClose" aria-label="关闭">×</button></div>
  <form id="reinstallForm" class="test-form">
   <p class="warning">原 Windows、客户配置及当前快照不会保留在新系统内。旧 VM 文件目录将转入回退备份区，占用额外磁盘空间。重装后需要重新注册 Guest Agent。</p>
