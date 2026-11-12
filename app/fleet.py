@@ -147,7 +147,7 @@ class FleetStore:
             d.execute("UPDATE guest_tasks SET status='CANCELLED',message='Guest identity revoked',completed_at=? WHERE vm_id=? AND status IN ('QUEUED','CLAIMED','RUNNING')", (now(),vm_id))
 
     def heartbeat(self, vm_id: str, report: dict):
-        if not isinstance(report,dict) or len(json.dumps(report)) > 12288:
+        if not isinstance(report,dict) or len(json.dumps(report)) > 16384:
             raise FleetError('Report too large or invalid')
         smbios=report.get('smbios_uuid')
         if smbios is not None:
@@ -276,6 +276,13 @@ class FleetStore:
                 # The browser cannot provide a different path or executable.
                 options = {'mode': 'portable_catalog',
                            'portable': dict(profile)}
+                agent_version = report.get('guest_agent','') if isinstance(report,dict) else ''
+                try:
+                    numbers = tuple(int(v) for v in agent_version.split('.'))
+                except (ValueError,TypeError,AttributeError):
+                    numbers = ()
+                if len(numbers) != 3 or numbers < (2,0,25):
+                    raise FleetError('该客户机需要 Guest Agent v2.0.25 或更高版本才能统一更新')
                 installed = report.get('portable_software', {}) if isinstance(report, dict) else {}
                 if not isinstance(installed, dict) or not any(
                         name.casefold()==profile['folder'].casefold() for name in installed):
