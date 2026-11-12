@@ -216,6 +216,11 @@
             <div class="remote-command-meta"><span id="remoteCommandCount" role="status" aria-live="polite">0 / 8,000 字符（CMD）</span><span>CMD ≤ 8,000 · PowerShell ≤ 12,000；超过 2,000 字符需使用 Guest Agent v2.0.21 或更新版本</span></div>
             <div class="remote-buttons"><button type="button" class="btn primary" id="remoteExecBtn" disabled>执行命令</button><span class="muted">前台模式使用当前已登录用户的权限打开持续 CMD/PowerShell；没有用户登录时会明确失败。直接用 cd /d 进入目录并 call Start.bat。</span></div>
           </section>
+          <section class="panel remote-section" id="remoteSelfActionsPanel">
+            <div class="panel-head"><div><h2>客户自助操作</h2><p>使用客户服务工作台已启用的操作，且仅针对当前虚拟机。执行结果统一在下方「最近执行记录」查看。</p></div></div>
+            <div id="remoteSelfActionsStatus" class="muted" role="status">选择虚拟机后读取操作列表</div>
+            <div id="remoteSelfActions" class="remote-compact-list" aria-live="polite"></div>
+          </section>
           <section class="panel remote-section">
             <div class="panel-head"><div><h2>文件与日志</h2><p>受限于 Agent 的 logs / incoming 目录，日志只读取末尾 24 KB。</p></div></div>
             <div class="remote-form-two">
