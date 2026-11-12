@@ -391,7 +391,7 @@ def run_live(config_path:Path,stop:threading.Event=None):
                         reply={'type':'operation.result','id':op_id,'ok':good,'result':result}
                     else:
                         mode=task.get('kind')
-                        if mode=='ROLLBACK':result=runtime.perform_rollback(task,cfg_local)
+                        if mode=='ROLLBACK':raise RuntimeError('LEGACY_ROLLBACK_DISABLED')
                         else:
                             def report_phase(phase):
                                 try:app_outbox.put_nowait({'type':'software.progress','id':op_id,'phase':phase})

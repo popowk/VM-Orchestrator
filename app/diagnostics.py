@@ -42,14 +42,17 @@ def diagnose(vmx: Path, vmrun: Vmrun, *, probe=exclusive_open_possible) -> dict:
         power_verified = False
     locks = sorted(x.name for x in vmx.parent.glob('*.lck'))
     suspend = sorted(x.name for x in vmx.parent.glob('*.vmss'))
-    exclusive = bool(probe(vmx)) if power_verified and not running and not suspend else False
+    # No exclusive-open probe is attempted for suspended/running/unknown state.
+    # Distinguish "skipped for safety" from a real file lock failure.
+    probe_skipped = not power_verified or bool(running) or bool(suspend)
+    exclusive = bool(probe(vmx)) if not probe_skipped else False
     power = 'UNKNOWN' if not power_verified else ('POWERED_ON' if running else ('SUSPENDED' if suspend else 'POWERED_OFF'))
     if not power_verified:
         cause = 'VMware vmrun 无法确认电源状态；禁止修改 VMX'
     elif running:
         cause = '虚拟机仍在运行；关机后才能修改截图配置'
     elif suspend:
-        cause = '检测到挂起状态 .vmss；请恢复并正常关机，禁止直接删除'
+        cause = 'VMware 未报告正在运行，但发现 .vmss 保存的挂起内存；应按挂起处理。请点击恢复运行，再在 Windows 内正常关机后重新诊断；禁止手工删除 .vmss 或 .lck'
     elif not exclusive:
         cause = 'VMX 文件当前可能被 VMware 或其他进程占用；请关闭该虚拟机的设置窗口后重试'
     elif locks:
@@ -60,6 +63,7 @@ def diagnose(vmx: Path, vmrun: Vmrun, *, probe=exclusive_open_possible) -> dict:
         'vmx_exists': vmx.is_file(), 'power_state': power,
         'vmrun_confirmed': power_verified, 'lock_markers': locks,
         'suspend_files': suspend, 'vmx_exclusive_open': exclusive,
+        'vmx_probe_skipped': probe_skipped,
         'offline_vmx_edit_possible': power == 'POWERED_OFF' and exclusive,
         'reason': cause,
         'warning': ('发现 .lck 标记；VMware 管理界面仍可能修改配置，请避免同时打开设置窗口。' if locks else None),

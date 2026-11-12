@@ -15,7 +15,6 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VALID_PRODUCTS = {'dsh', 'fish-soul', 'snowluma'}
 VERSION = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$')
 SMBIOS_UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',re.I)
 
@@ -177,7 +176,7 @@ class FleetStore:
                 'SELECT vm_id,agent_id,registered_at,last_seen,reported_json,revoked_at FROM guest_enrollment ORDER BY registered_at DESC')]
 
     def add_package(self, product: str, version: str, sha256: str, size: int, name: str, package_id: str | None = None):
-        if not (product in VALID_PRODUCTS or re.fullmatch(r'portable-p-[0-9a-f]{20}', product)) or not VERSION.fullmatch(version):
+        if not re.fullmatch(r'portable-p-[0-9a-f]{20}', product) or not VERSION.fullmatch(version):
             raise FleetError('Unsupported product or unsafe version')
         package_id = package_id or str(uuid.uuid4())
         with self.db() as d:
@@ -251,100 +250,45 @@ class FleetStore:
             busy = d.execute("SELECT id FROM guest_tasks WHERE vm_id=? AND status IN ('QUEUED','CLAIMED','RUNNING')", (vm_id,)).fetchone()
             if not vm or vm['state'] != 'READY' or not agent or agent['revoked_at'] or not pack or busy:
                 raise FleetError('VM not ready, no active agent, unknown package or previous update pending')
-            # A registered Guest is not necessarily ready to update software.
-            # Never enqueue a task that its last reported local adapter cannot execute.
+            # New updates are exclusively the server-reviewed portable ZIP catalog.
+            # Retain historical task rows for auditing; do not dispatch old modes.
+            portable=re.fullmatch(r'portable-(p-[0-9a-f]{20})',pack['product'])
+            if not portable:
+                raise FleetError('旧版安装适配器已停用，请上传统一便携程序 ZIP')
             try:
-                report = json.loads(agent['reported_json'] or '{}')
-                modes = report.get('install_modes', {}) if isinstance(report, dict) else {}
-            except (ValueError, TypeError):
-                modes = {}
-            allowed_modes = {'snowluma': {'portable_managed', 'portable'},
-                             'dsh': {'desktop_installer', 'npm_global'},
-                             'fish-soul': {'dsh_plugin_user', 'dsh_plugin'}}
-            portable = pack and re.fullmatch(r'portable-(p-[0-9a-f]{20})', pack['product'])
-            if portable:
-                profile = d.execute(
-                    '''SELECT p.id,p.folder,p.launcher,
-                        COALESCE(m.version_file,p.version_file) AS version_file,
-                        COALESCE(m.version_source,p.version_source) AS version_source
-                       FROM portable_profiles AS p
-                       JOIN portable_package_meta AS m ON m.profile_id=p.id
-                       WHERE p.id=? AND m.package_id=?''',
-                    (portable.group(1), package_id)).fetchone()
-                if not profile:
-                    raise FleetError('此更新包没有对应的软件目录配置，请重新上传')
-                # The browser cannot provide a different path or executable.
-                options = {'mode': 'portable_catalog',
-                           'portable': dict(profile)}
-                agent_version = report.get('guest_agent','') if isinstance(report,dict) else ''
-                try:
-                    numbers = tuple(int(v) for v in agent_version.split('.'))
-                except (ValueError,TypeError,AttributeError):
-                    numbers = ()
-                if len(numbers) != 3 or numbers < (2,0,25):
-                    raise FleetError('该客户机需要 Guest Agent v2.0.25 或更高版本才能统一更新')
-                installed = report.get('portable_software', {}) if isinstance(report, dict) else {}
-                if not isinstance(installed, dict) or not any(
-                        name.casefold()==profile['folder'].casefold() for name in installed):
-                    raise FleetError('客户机最近心跳未发现 C:\\dsh\\'+profile['folder']+'；请检查文件夹、Guest 版本及心跳')
-                if options['portable'].get('launcher') and not any(
-                        name.casefold()==profile['folder'].casefold() and
-                        isinstance(item,dict) for name,item in installed.items()):
-                    raise FleetError('客户机程序识别数据不完整')
-            else:
-                # Legacy signed installer adapters remain separate and do not
-                # become arbitrary process-execution via portable packages.
-                direct = pack['product']=='snowluma' and (options or {}).get('mode')=='snowluma_direct'
-                if not direct and (not isinstance(modes, dict) or
-                                   modes.get(pack['product'], 'disabled') not in allowed_modes.get(pack['product'],set())):
-                    raise FleetError(f"{pack['product']}: 客户机尚未配置安装适配器")
+                report=json.loads(agent['reported_json'] or '{}')
+            except (TypeError,ValueError):
+                report={}
+            if not isinstance(report,dict):
+                report={}
+            profile=d.execute(
+                '''SELECT p.id,p.folder,p.launcher,
+                    COALESCE(m.version_file,p.version_file) AS version_file,
+                    COALESCE(m.version_source,p.version_source) AS version_source
+                   FROM portable_profiles AS p
+                   JOIN portable_package_meta AS m ON m.profile_id=p.id
+                   WHERE p.id=? AND m.package_id=?''',
+                (portable.group(1),package_id)).fetchone()
+            if not profile:
+                raise FleetError('更新包没有可用的软件目录配置，请重新上传')
+            options={'mode':'portable_catalog','portable':dict(profile)}
+            raw_version=report.get('guest_agent','')
+            try:
+                parts=tuple(int(x) for x in raw_version.split('.'))
+            except (AttributeError,ValueError,TypeError):
+                parts=()
+            if len(parts)!=3 or parts<(2,0,25):
+                raise FleetError('此客户机需要 Guest Agent v2.0.25 或更新版本')
+            installed=report.get('portable_software',{})
+            if not isinstance(installed,dict) or not any(
+                   name.casefold()==profile['folder'].casefold() and isinstance(value,dict)
+                   for name,value in installed.items()):
+                raise FleetError('客户机尚未上报 C:\\dsh\\'+profile['folder']+' 软件目录')
             if not agent['last_seen'] or (datetime.now(timezone.utc)-datetime.fromisoformat(agent['last_seen'])).total_seconds() > 600:
                 raise FleetError('Guest Agent 心跳已超出 10 分钟；请先恢复自动心跳')
             id_ = str(uuid.uuid4())
             d.execute("INSERT INTO guest_tasks(id,vm_id,package_id,status,created_at,options_json) VALUES(?,?,?,'QUEUED',?,?)",
                       (id_,vm_id,package_id,now(),json.dumps(options or {},ensure_ascii=False)))
-        return id_
-
-    def queue_plugin_command(self, vm_id: str, command: str, version: str):
-        """One administrator-approved, audited command per VM; no ZIP required.
-
-        The Guest executes under the active Windows user's token, not SYSTEM.
-        No retry on lost WSS acknowledgment. This API never accepts client sessions.
-        """
-        from .update_commands import validate_plugin_command
-        validate_plugin_command(command,version)
-        with self.db() as d:
-            vm=d.execute('SELECT state FROM vms WHERE id=?',(vm_id,)).fetchone()
-            agent=d.execute('SELECT revoked_at,last_seen FROM guest_enrollment WHERE vm_id=?',(vm_id,)).fetchone()
-            busy=d.execute("SELECT id FROM guest_tasks WHERE vm_id=? AND status IN ('QUEUED','CLAIMED','RUNNING')",(vm_id,)).fetchone()
-            if not vm or vm['state']!='READY' or not agent or agent['revoked_at'] or busy:
-                raise FleetError('VM unavailable, Agent not registered, or another update is pending')
-            if not agent['last_seen'] or (datetime.now(timezone.utc)-datetime.fromisoformat(agent['last_seen'])).total_seconds()>600:
-                raise FleetError('Guest Agent heartbeat older than 10 minutes')
-            package_id=str(uuid.uuid4());task_id=str(uuid.uuid4())
-            # Empty synthetic package: command-only updates never download an artifact.
-            d.execute('INSERT INTO update_packages(id,product,version,filename,sha256,bytes,uploaded_at) VALUES(?,?,?,?,?,?,?)',
-                      (package_id,'fish-soul',version,'approved-plugin-command', '0'*64,0,now()))
-            d.execute("INSERT INTO guest_tasks(id,vm_id,package_id,status,created_at,kind,options_json) VALUES(?,?,?,'QUEUED',?,'PLUGIN_COMMAND',?)",
-                      (task_id,vm_id,package_id,now(),json.dumps({'command':command},ensure_ascii=False)))
-        return task_id
-
-    def queue_rollback(self, vm_id: str, task_id: str):
-        """Rollback is manual and only to a known, successful, pinned release."""
-        with self.db() as d:
-            d.execute('BEGIN IMMEDIATE')  # serialize with package revocation
-            original=d.execute("SELECT * FROM guest_tasks WHERE id=? AND vm_id=? AND status='SUCCEEDED' AND kind='UPDATE'",(task_id,vm_id)).fetchone()
-            vm=d.execute('SELECT state FROM vms WHERE id=?',(vm_id,)).fetchone()
-            agent=d.execute('SELECT revoked_at FROM guest_enrollment WHERE vm_id=?',(vm_id,)).fetchone()
-            busy=d.execute("SELECT id FROM guest_tasks WHERE vm_id=? AND status IN ('QUEUED','CLAIMED','RUNNING')",(vm_id,)).fetchone()
-            if not original or not vm or vm['state']!='READY' or not agent or agent['revoked_at'] or busy:
-                raise FleetError('Rollback requires a successful update and ready VM without outstanding tasks')
-            if not d.execute('SELECT 1 FROM update_packages WHERE id=? AND deleted_at IS NULL',(original['package_id'],)).fetchone():
-                raise FleetError('Approved update package was deleted; rollback is unavailable')
-            newer=d.execute("SELECT id FROM guest_tasks WHERE vm_id=? AND package_id=? AND kind='UPDATE' AND status='SUCCEEDED' AND created_at>?",(vm_id,original['package_id'],original['created_at'])).fetchone()
-            if newer: raise FleetError('A newer update exists; rollback would be unsafe')
-            id_=str(uuid.uuid4())
-            d.execute("INSERT INTO guest_tasks(id,vm_id,package_id,status,created_at,kind,reference_id) VALUES(?,?,?,'QUEUED',?,'ROLLBACK',?)",(id_,vm_id,original['package_id'],now(),task_id))
         return id_
 
     def tasks(self, vm_id: str | None = None, limit: int = 100, offset: int = 0):
@@ -378,9 +322,19 @@ class FleetStore:
                       "WHERE vm_id=? AND status='RUNNING' AND progress_at<?",
                       ('Update outcome unknown after lost heartbeat; review Guest update-journals before any retry',now(),vm_id,progress_cutoff))
             task = d.execute("SELECT * FROM guest_tasks WHERE vm_id=? AND status='QUEUED' ORDER BY created_at LIMIT 1",(vm_id,)).fetchone()
-            if not task: return None
+            # Old adapters were retired: fail only tasks that have NEVER been
+            # claimed, rather than accidentally executing historical scripts.
+            # Previously CLAIMED/RUNNING tasks retain their audit outcomes.
+            while task:
+                pkg=d.execute('SELECT * FROM update_packages WHERE id=?',(task['package_id'],)).fetchone()
+                if (pkg and task['kind']=='UPDATE' and
+                    re.fullmatch(r'portable-p-[0-9a-f]{20}',pkg['product'])):
+                    break
+                d.execute("UPDATE guest_tasks SET status='FAILED',message=?,completed_at=? WHERE id=? AND status='QUEUED'",
+                          ('旧版更新方式已停用，任务未执行；请上传新 ZIP 更新包',now(),task['id']))
+                task=d.execute("SELECT * FROM guest_tasks WHERE vm_id=? AND status='QUEUED' ORDER BY created_at LIMIT 1",(vm_id,)).fetchone()
+            if not task:return None
             d.execute("UPDATE guest_tasks SET status='CLAIMED', claimed_at=? WHERE id=? AND status='QUEUED'",(now(),task['id']))
-            pkg = d.execute('SELECT * FROM update_packages WHERE id=?',(task['package_id'],)).fetchone()
             return {'id':task['id'], 'product':pkg['product'], 'version':pkg['version'],
                     'package_id':pkg['id'], 'sha256':pkg['sha256'], 'size':pkg['bytes'],
                     'kind':task['kind'],'reference_id':task['reference_id'],

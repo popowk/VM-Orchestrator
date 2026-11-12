@@ -4,7 +4,6 @@ The 8765 listener can bind all interfaces, but admin access MUST be firewall/TLS
 """
 import hmac
 import hashlib
-import base64
 import secrets
 import time
 import asyncio
@@ -14,7 +13,6 @@ import shutil
 import threading
 import os
 import zipfile
-import io
 import json
 import uuid
 from pathlib import Path
@@ -29,7 +27,7 @@ from .vnc_screen import enable_vnc, capture_loopback_vnc, vnc_config
 from .config import Settings
 from .jobs import JobRunner
 from .storage import StoreConflict, TemplateStore
-from .fleet import FleetStore, FleetError, VALID_PRODUCTS, VERSION
+from .fleet import FleetStore, FleetError
 from .remote_ops import RemoteStore, RemoteError, UPLOAD_CHUNK, DEFAULT_UPLOAD_DIR
 from .agent_update import AgentUpdateManager, build_bootstrap
 from .vmrun import Vmrun, VmrunError
@@ -98,13 +96,6 @@ class ApiKeyCreate(BaseModel):
 
 
 
-class AcceptanceRequest(BaseModel):
-    confirm_test_vm: bool = False
-    test_power: bool = False
-    include_restore: bool = False
-    confirm_data_loss: bool = False
-
-
 class SnapshotCreate(BaseModel):
     name: str = Field(min_length=1, max_length=48, pattern=NAME_RE.pattern)
 
@@ -132,11 +123,6 @@ class UpdateRequest(BaseModel):
     package_id: str
     install_dir: str | None = None
     confirm_backup_and_compatibility: bool = False
-
-class PluginCommandRequest(BaseModel):
-    version: str
-    command: str
-    confirm: bool = False
 
 class TemplateRemovalRequest(BaseModel):
     confirm_name: str = Field(min_length=1, max_length=100)
@@ -887,79 +873,6 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         return {'operation_id':operation,'status':'QUEUED','target_version':manifest['version'],
                 'note':'Task starts a separate updater. Success requires a new WSS heartbeat reporting the target version.'}
 
-    @app.post('/api/vms/{vm_id}/guest-enrollment', dependencies=[Depends(authorized)])
-    def guest_enrollment(vm_id: str):
-        try:
-            return {'vm_id':vm_id, 'one_time_token':fleet.create_enrollment(vm_id), 'expires_in_seconds':3600,
-                    'note':'Copy this token into the corresponding guest only. Restricted HTTPS Guest Gateway and Guest Agent installation are required.'}
-        except FleetError as exc: raise HTTPException(409,str(exc))
-
-    @app.post('/api/vms/{vm_id}/guest-installer.zip', dependencies=[Depends(authorized)])
-    def per_vm_guest_installer(vm_id: str):
-        # A one-time installer for an existing Windows guest; never include this in a gold template.
-        vm=store.get_vm(vm_id)
-        if not vm or vm['state']!='READY': raise HTTPException(409,'VM must be READY')
-        gateway_url=os.environ.get('VMO_GUEST_GATEWAY_URL','')
-        ca_path=os.environ.get('VMO_GUEST_CA_PEM','')
-        if not gateway_url.startswith('https://') or not ca_path or not Path(ca_path).is_file():
-            raise HTTPException(409,'Guest Gateway 未配置：启动 Start-VM-Orchestrator.cmd，确保客户网络可以访问宿主机 Guest Gateway TCP/8766。')
-        try: token=fleet.create_enrollment(vm_id)
-        except FleetError as exc: raise HTTPException(409,str(exc))
-        guest_dir=Path(__file__).resolve().parent.parent/'guest_agent'
-        cfg={'server_url':gateway_url, 'vm_id':vm_id, 'enrollment_token':token,
-             'ca_bundle':r'C:\ProgramData\VMO\host-only-ca.pem',
-             'installations':{'dsh':{'mode':'disabled'},'fish-soul':{'mode':'disabled'},'snowluma':{'mode':'disabled'}}}
-        def installer_cmd(args: str) -> str:
-            # An explicit elevation check avoids the previous partial-copy install.
-            return ('@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\n'
-                    'fltmc >nul 2>&1\r\nif errorlevel 1 (\r\n'
-                    '  echo ERROR: Right-click and Run as administrator.\r\n'
-                    '  pause\r\n  exit /b 1\r\n)\r\n'
-                    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-GuestAgentV2.ps1" '
-                    + args + '\r\nif errorlevel 1 (\r\n'
-                    '  echo ERROR: Guest Agent install/repair failed.\r\n'
-                    '  pause\r\n  exit /b 1\r\n)\r\n'
-                    'echo Guest Agent code and task installed. Check enrollment in the Host UI.\r\npause\r\n')
-        output=io.BytesIO()
-        with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED) as z:
-            # Single V2 service installer: enrollment and updates share one runtime.
-            v2_files = (
-                'agent_v2.py','runtime_core.py','agent-release.json','interactive_session.py','upload_directory.py','app_tunnel.py',
-                'ws_client.py','app_registry.py','local_app_report.py','windows_service.py',
-                'update_lifecycle.py','dsh_updates.py','quick_updates.py','quick_plugin_update.py',
-                'update_commands.py','user_update_exec.py','machine_identity.py','Probe-Gateway.py',
-                'Install-GuestAgentV2.ps1','Install-GuestAgentV2.cmd','Report-App-JSON.py',
-                'Report-App.cmd','Report-App-Startup.ps1','Configure-ManagedUpdates.ps1',
-                'Set-RemotePermissions.ps1','Enable-RemoteCommands.cmd','Disable-RemoteCommands.cmd',
-                'Register-AyuBridge-Interactive.ps1','Check-V2.ps1',
-            )
-            for filename in v2_files:
-                z.writestr(filename,(guest_dir/filename).read_bytes())
-            helper_dir=Path(__file__).resolve().parent.parent/'scripts'/'guest'
-            for filename in ('Set-Guest-AutoLogon.ps1',):
-                z.writestr(filename,(helper_dir/filename).read_bytes())
-            z.writestr('Set-Guest-AutoLogon.cmd',
-                '@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\n'
-                'fltmc >nul 2>&1\r\nif errorlevel 1 (echo Run as administrator. & pause & exit /b 1)\r\n'
-                'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Set-Guest-AutoLogon.ps1"\r\npause\r\n')
-            z.writestr('Configure-SnowLuma.ps1',(guest_dir/'Configure-SnowLuma.ps1').read_bytes())
-            z.writestr('Configure-SnowLuma.cmd',(guest_dir/'Configure-SnowLuma.cmd').read_bytes())
-            z.writestr('agent.json',json.dumps(cfg,ensure_ascii=False,indent=2))
-            z.writestr('host-only-ca.pem',Path(ca_path).read_bytes())
-            z.writestr('Install-ThisGuest.cmd',installer_cmd('-ConfigFile "%~dp0agent.json"'))
-            z.writestr('Repair-ThisGuest.cmd',installer_cmd(''))
-            z.writestr('Check-ThisGuest.cmd',
-                       '@echo off\r\ncd /d "%~dp0"\r\nfltmc >nul 2>&1\r\nif errorlevel 1 (echo Run as administrator. & pause & exit /b 1)\r\n'
-                       'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Check-V2.ps1"\r\npause\r\n')
-        return FastResponse(content=output.getvalue(),media_type='application/zip',headers={
-            'Cache-Control':'no-store', 'Content-Disposition':f'attachment; filename="VMO-Guest-{vm_id}.zip"'})
-
-    @app.post('/api/vms/{vm_id}/revoke-guest', dependencies=[Depends(authorized)])
-    def guest_revoke(vm_id: str):
-        if not store.get_vm(vm_id): raise HTTPException(404,'VM not found')
-        fleet.revoke_vm(vm_id)
-        return {'vm_id':vm_id,'revoked':True}
-
     @app.get('/api/fleet/portable/profiles', dependencies=[Depends(authorized)])
     def portable_program_profiles():
         return portable_catalog.all()
@@ -1014,41 +927,13 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
 
     @app.get('/api/fleet/packages', dependencies=[Depends(authorized)])
     def packages():
-        result=fleet.packages()
+        # Never offer discontinued adapters for new installs. Historical records
+        # remain persisted for auditing and older task result reconciliation.
+        result=[item for item in fleet.packages()
+                if item['product'].startswith('portable-p-')]
         for item in result:
-            if item['product'].startswith('portable-p-'):
-                item.update(portable_catalog.release_metadata(item['id']))
+            item.update(portable_catalog.release_metadata(item['id']))
         return result
-
-    @app.post('/api/fleet/packages/{product}/{version}', dependencies=[Depends(authorized)],status_code=201)
-    async def upload_package(product: str, version: str, request: Request):
-        # A binary ZIP upload. No remote URL fetching or registry installation is permitted.
-        if product not in VALID_PRODUCTS or not VERSION.fullmatch(version):
-            raise HTTPException(422,'Unknown product or unsafe version')
-        root=settings.db_path.parent/'approved_packages'
-        root.mkdir(parents=True,exist_ok=True)
-        package_id=str(uuid.uuid4())
-        path=root/(package_id+'.zip')
-        size=0
-        sha=hashlib.sha256()
-        try:
-            with path.open('xb') as f:
-                async for part in request.stream():
-                    size += len(part)
-                    if size > 512*1024*1024: raise HTTPException(413,'Package exceeds 512 MB limit')
-                    f.write(part);sha.update(part)
-            if size < 50 or not zipfile.is_zipfile(path):
-                raise HTTPException(422,'Upload must be a valid ZIP package')
-            with zipfile.ZipFile(path) as archive:
-                if len(archive.infolist())>20000 or sum(i.file_size for i in archive.infolist())>2*1024**3:
-                    raise HTTPException(422,'Uncompressed package/file count exceeds limits')
-                bad=archive.testzip()
-                if bad: raise HTTPException(422,'ZIP CRC validation failed')
-            fleet.add_package(product,version,sha.hexdigest(),size,'approved-update.zip',package_id)
-            return fleet.package(package_id)
-        except BaseException:
-            path.unlink(missing_ok=True)
-            raise
 
     @app.delete('/api/fleet/packages/{package_id}', dependencies=[Depends(authorized)])
     def delete_update_package(package_id: str):
@@ -1215,35 +1100,16 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     def software_update(vm_id: str, payload: UpdateRequest):
         if not payload.confirm_backup_and_compatibility:
             raise HTTPException(422,'Operator must confirm compatibility, local agent adapter, and backup plan')
+        if payload.install_dir:
+            raise HTTPException(422,'旧版指定安装目录方式已停用；请上传单顶层程序目录 ZIP')
+        p=fleet.package(payload.package_id)
+        if not p or not p['product'].startswith('portable-p-'):
+            raise HTTPException(422,'旧版软件更新包已停用，请使用便携 ZIP 软件版本库')
         try:
-            options={}
-            if payload.install_dir:
-                from .update_commands import validate_install_dir
-                options={'mode':'snowluma_direct','install_dir':validate_install_dir(payload.install_dir)}
-                p=fleet.package(payload.package_id)
-                if not p or p['product']!='snowluma':raise HTTPException(422,'Install directory override is only supported for SnowLuma')
-            task_id=fleet.queue_update(vm_id,payload.package_id,options=options)
+            task_id=fleet.queue_update(vm_id,payload.package_id,options={})
         except FleetError as exc: raise HTTPException(409,str(exc))
-        except ValueError as exc: raise HTTPException(422,str(exc))
         return {'task_id':task_id,'vm_id':vm_id,'status':'QUEUED',
-                'note':('SnowLuma direct update queued; Guest will stop the selected installation, retain a backup, restart and verify version.' if options else 'Guest Agent will apply only if a matching install adapter is configured locally; failed updates retain local backup.')}
-
-    @app.post('/api/vms/{vm_id}/plugin-command-update', dependencies=[Depends(authorized)],status_code=202)
-    def plugin_command_update(vm_id: str,payload:PluginCommandRequest):
-        managed_vm(vm_id)
-        if not payload.confirm:raise HTTPException(422,'Administrator must confirm update and profile backup')
-        try: task_id=fleet.queue_plugin_command(vm_id,payload.command,payload.version)
-        except (FleetError,ValueError) as exc:raise HTTPException(422,str(exc))
-        return {'task_id':task_id,'vm_id':vm_id,'status':'QUEUED',
-                'note':'PowerShell command will run as the active Windows user; exit code is not proof that the plugin has loaded'}
-
-    @app.post('/api/vms/{vm_id}/software-rollback/{task_id}', dependencies=[Depends(authorized)], status_code=202)
-    def software_rollback(vm_id: str, task_id: str, payload: UpdateRequest):
-        if not payload.confirm_backup_and_compatibility:
-            raise HTTPException(422,'Rollback requires explicit approval of possible data and compatibility impact')
-        try: id_=fleet.queue_rollback(vm_id,task_id)
-        except FleetError as exc: raise HTTPException(409,str(exc))
-        return {'task_id':id_,'vm_id':vm_id,'status':'QUEUED'}
+                'note':'Guest 将按登记的程序目录执行备份替换，并保留更新前的运行状态。'}
 
     @app.get('/api/jobs', dependencies=[Depends(authorized)])
     def list_jobs(vm_id: str | None = Query(default=None), page: int = Query(default=1, ge=1, le=100000),
@@ -1437,18 +1303,6 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
                 'note': 'OOBE complete only when an authenticated Guest Agent confirms SetupComplete, account and Windows ImageState; VMware Tools/IP alone do not prove it.',
                 'unattend': provisioning_status(secret_root, vm_id, vmx)}
 
-    @app.post('/api/vms/{vm_id}/firstboot-start', dependencies=[Depends(authorized)], status_code=202)
-    def firstboot_start(vm_id: str):
-        vm, vmx = managed_vm(vm_id)
-        if vm['state'] != 'READY':
-            raise HTTPException(409, 'VM not ready')
-        try:
-            if vmrun.is_running(vmx):
-                raise HTTPException(409, 'VM is already running; use status/screen instead')
-        except VmrunError as exc:
-            raise HTTPException(503, str(exc))
-        return queue_vm_action(vm_id, 'FIRSTBOOT_START')
-
     @app.get('/api/vms/{vm_id}/snapshots', dependencies=[Depends(authorized)])
     def list_snapshots(vm_id: str):
         vm, vmx = managed_vm(vm_id)
@@ -1462,42 +1316,6 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
                     'limit': MAX_SNAPSHOTS, 'can_create': len(snapshots) < MAX_SNAPSHOTS}
         except VmrunError as exc:
             raise HTTPException(503, str(exc))
-
-    @app.post('/api/vms/{vm_id}/acceptance-test', dependencies=[Depends(authorized)], status_code=202)
-    def acceptance_test(vm_id: str, payload: AcceptanceRequest):
-        """Run a controlled smoke test on an explicitly confirmed disposable VM."""
-        if not payload.confirm_test_vm:
-            raise HTTPException(422, 'Confirm this is a disposable test VM')
-        if payload.include_restore and not payload.confirm_data_loss:
-            raise HTTPException(422, 'Snapshot restore requires explicit data-loss confirmation')
-        vm, vmx = managed_vm(vm_id)
-        if vm['state'] != 'READY':
-            raise HTTPException(409, 'VM is not ready')
-        try:
-            if vmrun.is_running(vmx):
-                raise HTTPException(409, 'Stop VM before running acceptance test')
-        except VmrunError:
-            raise HTTPException(503, 'Cannot verify VM power state')
-        if list(vmx.parent.glob('*.vmss')) or list(vmx.parent.glob('*.lck')):
-            raise HTTPException(409, 'VM has suspend or lock files')
-        try:
-            if len(vmrun.snapshots(vmx)) >= MAX_SNAPSHOTS:
-                raise HTTPException(409, f'Maximum {MAX_SNAPSHOTS} snapshots per VM; delete an old snapshot first')
-        except VmrunError as exc:
-            raise HTTPException(503, str(exc))
-        try:
-            job = store.queue_action(vm_id, 'ACCEPTANCE_TEST')
-        except StoreConflict as exc:
-            raise HTTPException(409, str(exc))
-        runner.submit(job['id'], vm_id, 'ACCEPTANCE_TEST',
-                      test_power=payload.test_power, include_restore=payload.include_restore)
-        return job_accepted(job)
-
-    def ensure_snapshot_off(vmx: Path):
-        try:
-            assert_powered_off(vmx, vmrun, strict_locks=False)
-        except VmrunError as exc:
-            raise HTTPException(409, str(exc))
 
     @app.post('/api/vms/{vm_id}/snapshots', dependencies=[Depends(authorized)], status_code=202)
     def create_snapshot(vm_id: str, payload: SnapshotCreate):

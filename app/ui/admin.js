@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.55 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.56 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -17,7 +17,7 @@ function VMOConnectEvents(){
 }
 function VMOCloseEvents(){if(VMOEventSource){VMOEventSource.close();VMOEventSource=null;}}
 const $ = id => document.getElementById(id);
-const state = { csrf:'', templates:[], vms:[], jobs:[], capabilities:null, testVmId:null, viewingVm:null, activePage:'overview', busy:false, watched:new Set(), defaultTemplate:null, guests:[], packages:[], portableProfiles:[], updateTasks:[], reinstalls:[], reinstallVm:null, packageSelections:{}, packageDirectories:{}, jobsPage:1, updatePage:1, jobsPaged:{items:[],page:1,pages:1,total:0}, updatesPaged:{items:[],page:1,pages:1,total:0} };
+const state = { csrf:'', templates:[], vms:[], jobs:[], capabilities:null, viewingVm:null, activePage:'overview', busy:false, watched:new Set(), defaultTemplate:null, guests:[], packages:[], portableProfiles:[], updateTasks:[], reinstalls:[], reinstallVm:null, packageSelections:{}, jobsPage:1, updatePage:1, jobsPaged:{items:[],page:1,pages:1,total:0}, updatesPaged:{items:[],page:1,pages:1,total:0} };
 const pages = { overview:'管理概览', vms:'虚拟机管理', templates:'黄金模板', updates:'软件更新', jobs:'任务记录', remote:'远程运维', clients:'思博客户服务', system:'系统更新', cleanup:'空间清理' };
 const statusName = { READY:'就绪', CREATING:'克隆中', ERROR:'异常', DELETING:'删除中', REINSTALLING:'重装中', REINSTALL_ERROR:'重装异常', DELETE_ERROR:'删除失败', SEALED_ATTESTED:'已封存', CANDIDATE:'待确认', ARCHIVED:'已归档', FILES_PURGING:'磁盘清理异常', FILES_DELETED:'文件已清理（保留历史）', POWERED_ON:'运行中', POWERED_OFF:'已关机', SUSPENDED:'挂起', UNKNOWN:'未知', QUEUED:'排队中', RUNNING:'执行中', SUCCEEDED:'成功', VERIFY_REQUIRED:'已执行，待版本核验', FAILED:'失败' };
 function el(tag, cls='', text='') { const v=document.createElement(tag); if(cls)v.className=cls; if(text!==undefined && text!==null)v.textContent=String(text); return v; }
@@ -193,10 +193,6 @@ function vmCard(vm){let card=el('div','vm-card'),head=el('div','vm-title'),name=
   actions.append(btn('强制关机','danger',()=>hardStop(vm),vm.power_state!=='POWERED_ON'));
   actions.append(btn('状态诊断','ghost',()=>openDiagnostics(vm)));
   actions.append(btn('初始化信息','ghost',()=>openProvision(vm)));
-  actions.append(btn('首次启动监控','ghost',()=>firstboot(vm),vm.power_state!=='POWERED_OFF'));
-  actions.append(btn('启用截图','ghost',()=>enableScreen(vm),vm.power_state!=='POWERED_OFF'));
-  actions.append(btn('查看屏幕','ghost',()=>openScreen(vm),vm.power_state!=='POWERED_ON'));
-  actions.append(btn('一键验收','ghost',()=>openTest(vm),vm.power_state!=='POWERED_OFF'));
   actions.append(btn('重装系统','warn',()=>openReinstall(vm),vm.power_state!=='POWERED_OFF'));
   actions.append(btn('软件更新','ghost',()=>{navigate('updates');},false));
  }
@@ -252,31 +248,6 @@ async function deleteVm(vm){
   if($('vmDialog').open)$('vmDialog').close();navigate('jobs');
  }catch(e){toast('删除失败：'+e.message,true);}
 }
-async function firstboot(vm){
-  if(!confirm(`自动启动「${vm.name}」并监控 VMware Tools 最多 5 分钟？\n该操作不会自动填写 Windows OOBE 页面，也不会强制重启。建议先启用截图。`))return;
-  try{await submitJob(`/api/vms/${encodeURIComponent(vm.id)}/firstboot-start`,'POST');navigate('jobs');}catch(e){toast(e.message,true);}
-}
-async function enableScreen(vm){
-  if(!confirm(`为关机的「${vm.name}」启用本机 127.0.0.1 VNC 截图？\n这是一次性设置，首次启用后需开机才能拍摄。\nVNC 的密码协议较旧，不允许将端口暴露到局域网或公网。`))return;
-  try{const d=await request(`/api/vms/${encodeURIComponent(vm.id)}/enable-screen`,'POST');toast(`本机截图通道已启用（127.0.0.1:${d.port}）${d.warning?'；注意：有残留锁标记，详情可在状态诊断中查看':''}，现在可以开机`);}catch(e){toast(e.message,true);}
-}
-let screenUrl=null;
-async function openScreen(vm){
-  $('screenTitle').textContent=`${vm.name} · 实时单帧截图`;
-  $('screenStatus').textContent='正在从本机 VNC 读取屏幕...';
-  $('screenImage').hidden=true;
-  if(!$('screenDialog').open)$('screenDialog').showModal();
-  $('screenRefresh').onclick=()=>openScreen(vm);
-  try{
-    const res=await fetch(`/api/vms/${encodeURIComponent(vm.id)}/screen.png?t=${Date.now()}`,{credentials:'same-origin',cache:'no-store'});
-    if(!res.ok){let j;try{j=await res.json();}catch{}throw Error(j?.detail||`HTTP ${res.status}`);}
-    if(screenUrl)URL.revokeObjectURL(screenUrl);
-    screenUrl=URL.createObjectURL(await res.blob());
-    $('screenImage').src=screenUrl;$('screenImage').hidden=false;
-    $('screenStatus').textContent='单帧截图已获取。可点击「刷新画面」重新抓取；截图不写入宿主机磁盘。';
-    $('screenRefresh').onclick=()=>openScreen(vm);
-  }catch(e){$('screenStatus').textContent='截图失败：'+e.message+'。虚拟机已经开机但还未开启本机 VNC 时，需要先关机、启用截图，再重新启动。';}
-}
 async function openDiagnostics(vm) {
   const body=$('dialogBody');body.replaceChildren();
   $('dialogTitle').textContent=`${vm.name} · 状态诊断`;
@@ -288,7 +259,7 @@ async function openDiagnostics(vm) {
     const grid=el('div','detail-table');
     [['VMware 电源状态',statusName[d.power_state]||d.power_state],
      ['VMX 存在',d.vmx_exists?'是':'否'],
-     ['VMX 可独占打开',d.vmx_exclusive_open?'是':'否'],
+     ['VMX 可独占打开',d.vmx_probe_skipped?'未检测（电源/挂起保护）':d.vmx_exclusive_open?'是':'否'],
      ['锁标记',d.lock_markers.length?d.lock_markers.join(', '):'无'],
      ['挂起文件',d.suspend_files.length?d.suspend_files.join(', '):'无'],
      ['VMX 离线编辑',d.offline_vmx_edit_possible?'允许尝试':'不允许'],
@@ -298,7 +269,12 @@ async function openDiagnostics(vm) {
     if(d.warning)body.append(el('p','warning',d.warning));
     const row=el('div','snap-toolbar');
     row.append(btn('重新诊断','ghost',()=>openDiagnostics(vm)));
-    if(d.offline_vmx_edit_possible)row.append(btn('启用截图','primary',()=>enableScreen(vm)));
+    if(d.power_state==='SUSPENDED'&&vm.state==='READY'){
+      row.append(btn('恢复运行','primary',async()=>{
+        await vmAction(vm,'start');
+        if($('vmDialog').open)$('vmDialog').close();
+      }));
+    }
     body.append(row);
   } catch(e) {body.replaceChildren(el('p','warning','诊断失败：'+e.message));}
 }
@@ -337,15 +313,6 @@ async function openProvision(vm) {
     }
   }catch(e){body.replaceChildren(el('p','warning','读取失败：'+e.message));}
 }
-async function firstbootState(vm){
-  try{
-    const r=await request(`/api/vms/${encodeURIComponent(vm.id)}/firstboot-state`);
-    const evidence=r.oobe_evidence?.report || {};
-    const done=r.oobe_complete===true;
-    const msg=`电源：${r.power_state} | VMware Tools：${r.tools_state} | IP：${r.guest_ip||'未知'} | OOBE：${done?'Guest Agent 已验证':'尚未验证'}${evidence.stage?'（'+evidence.stage+'）':''}。首次启动需要先有有效的 Guest Agent 注册及 SetupComplete 标记。`;
-    toast(msg);
-  }catch(e){toast(e.message,true);}
-}
 async function repair(vm){if(!confirm(`仅当 ${vm.name} 因重复 VMware UUID/MAC 导致完整克隆失败，才可以修复；并确认其已关机。继续？`))return;
  try{await submitJob(`/api/vms/${encodeURIComponent(vm.id)}/repair-clone-identity`);}catch(e){toast(e.message,true);}}
 function detailLine(grid,k,v){grid.append(el('div','',k),el('div','',v||'—'));}
@@ -380,11 +347,8 @@ async function openDetail(id) {
   const busy=state.jobs.some(j=>j.vm_id===id && ['QUEUED','RUNNING'].includes(j.status));
   if(vm.state==='READY'){
     const ops=el('div','snap-toolbar');
-    ops.append(btn('首次启动状态','ghost small',()=>firstbootState(vm)));
     ops.append(btn('状态诊断','ghost small',()=>openDiagnostics(vm)));
     ops.append(btn('初始化信息','ghost small',()=>openProvision(vm)));
-    ops.append(btn('查看屏幕截图','ghost small',()=>openScreen(vm),vm.power_state!=='POWERED_ON'));
-    if(vm.power_state==='POWERED_OFF')ops.append(btn('启用本机截图','ghost small',()=>enableScreen(vm)));
     if(vm.power_state==='POWERED_ON')ops.append(btn('强制关机','danger small',()=>hardStop(vm)));
     if(vm.power_state==='POWERED_OFF')ops.append(btn('删除虚拟机','danger small',()=>deleteVm(vm),busy));
     body.append(ops);
@@ -438,7 +402,6 @@ async function openDetail(id) {
   body.append(section);
   if(!$('vmDialog').open)$('vmDialog').showModal();
 }
-function openTest(vm){state.testVmId=vm.id;$('testVmName').textContent=`目标：${vm.name} · ${vm.id}`;$('testConfirmed').checked=false;$('testPower').checked=true;$('testRestore').checked=false;$('testRestoreConfirm').checked=false;$('restoreConfirmRow').hidden=true;$('testDialog').showModal();}
 function openReinstall(vm){
   if(vm.state!=='READY'||vm.power_state!=='POWERED_OFF'){toast('请先完全关机并确认没有任务',true);return;}
   state.reinstallVm=vm;
@@ -451,160 +414,168 @@ function openReinstall(vm){
   $('reinstallUnattended').checked=(state.templates.find(t=>t.id===select.value)?.oobe_bootstrap_version||0)>=2;
   $('reinstallDialog').showModal();
 }
-function renderFleet(){
- const list=$('guestList');list.replaceChildren();
- const guests=new Map(state.guests.map(x=>[x.vm_id,x]));
- if(!state.capabilities.guest_gateway_configured)list.append(el('div','empty','Guest 网关尚未配置：使用 Start-VM-Orchestrator.cmd 一键启动；Guest Gateway 默认使用宿主机 192.168.2.99:8766，并需允许客户网段 TCP 8766。'));
- if(!state.vms.length){list.append(el('div','empty','没有虚拟机'));} else {
-   for(const vm of state.vms){const row=el('div','template-card'),info=el('div'),g=guests.get(vm.id);
-     const current=g&&!g.revoked_at;
-     const last=g?.last_seen?VMO_BJT(g.last_seen):'未上线';
-     const versions=Object.entries(g?.reported?.versions||{}).map(([k,v])=>`${k} ${v}（已上报）`).join(' · ');
-     const discovered=Object.entries(g?.reported?.detected_software||{}).map(([k,v])=>`${k}${v.version_hint?' '+v.version_hint:''}（${v.version_verified?'已验证':'仅按目录推测'}）`).join(' · ');
-     const portable=Object.entries(g?.reported?.portable_software||{}).map(([k,v])=>
-       k+' '+(v.version_hint||'版本未知')+'（'+(v.version_verified?'版本已识别':'待确认')+'）').join(' · ');
-     const ips=(g?.reported?.ipv4_addresses||[]).join('、');
-     const minutes=g?.last_seen?(Date.now()-new Date(g.last_seen).getTime())/60000:Infinity;
-     const online=current&&minutes<=5;
-     const liveState=!current?'未注册 / 已撤销':(online?'Agent 心跳正常':'Agent 心跳超时');
-     const wssState=g?.wss?.state||'never_connected';
-     const wssLabel=({connected:'WSS 已连接',disconnected:'WSS 已断开',heartbeat_timeout:'WSS 心跳超时',never_connected:'WSS 未连接'})[wssState]||wssState;
-     info.append(el('strong','',vm.name),el('small','',`${liveState} · ${wssLabel}${current?` · Agent ${g.agent_id} · 最近心跳 ${last}`:''}`),
-        el('small','',`IPv4：${ips||'尚未上报'}（由客户机上报，仅供识别，不用于鉴权）`),
-        el('small','',portable||versions||discovered||'未检测到可验证的软件版本；可上传 ZIP 以登记更新'));
-     if(versions&&discovered)info.append(el('small','',discovered));
-     if(portable&&versions)info.append(el('small','',portable));
-     if(current)info.append(el('small','',`更新适配器：${Object.entries(g.reported?.install_modes||{}).map(([k,v])=>k+': '+v).join(' · ')||'尚未上报'}`));
-     const acts=el('div','snap-actions');acts.append(badge(wssState==='connected'?'READY':'UNKNOWN'));
-     acts.append(btn('下载专属安装包','primary small',async()=>{
-       if(!confirm(`下载 ${vm.name} 的专属 Guest Agent 安装包？内含 60 分钟有效的一次性令牌，仅给对应客户机使用。`))return;
-       try{
-         const res=await fetch(`/api/vms/${encodeURIComponent(vm.id)}/guest-installer.zip`,{
-            method:'POST',credentials:'same-origin',headers:{'X-UI-CSRF':state.csrf}});
-         if(!res.ok){const j=await res.json();throw Error(j.detail||'下载失败');}
-         const blob=await res.blob(),url=URL.createObjectURL(blob);
-         const a=document.createElement('a');a.href=url;a.download=`VMO-Guest-${vm.name}.zip`;a.click();
-         setTimeout(()=>URL.revokeObjectURL(url),2000);
-         toast('安装包已生成，复制到对应客户机以管理员身份执行 Install-ThisGuest.cmd');
-       }catch(e){toast(e.message,true);}
-     },!!current||vm.state!=='READY'));
-     acts.append(btn('创建一次性注册令牌','ghost small',async()=>{
-       if(!confirm(`为 ${vm.name} 生成有效期 60 分钟的一次性注册令牌？请仅复制到对应 Windows 客户机。`))return;
-       try{const r=await request(`/api/vms/${encodeURIComponent(vm.id)}/guest-enrollment`,'POST');
-         alert(`VM ID: ${vm.id}\n一次性令牌（仅显示本次）：\n${r.one_time_token}\n\n请复制到客户机 Guest Agent 配置中，切勿分享。`);
-       }catch(e){toast(e.message,true);}
-     },!!current||vm.state!=='READY'));
-     if(current)acts.append(btn('撤销注册','danger small',async()=>{
-       const c=prompt('撤销将让旧 Guest Agent 失效；请输入虚拟机名称确认：');if(c!==vm.name)return;
-       try{await request(`/api/vms/${encodeURIComponent(vm.id)}/revoke-guest`,'POST');await refresh();}
-       catch(e){toast(e.message,true);}
-     }));
-     info.append(el('small','',`VM ID: ${vm.id}`));row.append(info,acts);list.append(row);
-   }
- }
- const pluginSelect=$('pluginVm');if(pluginSelect&&document.activeElement!==pluginSelect){
-   const prev=pluginSelect.value;pluginSelect.replaceChildren(new Option('选择在线客户机',''));
-   for(const m of state.vms){const g=guests.get(m.id);
-     if(m.state==='READY'&&g&&!g.revoked_at&&g.last_seen&&(Date.now()-new Date(g.last_seen).getTime())<600000)
-       pluginSelect.add(new Option(m.name,m.id));}
-   if([...pluginSelect.options].some(x=>x.value===prev))pluginSelect.value=prev;
- }
- const pack=$('packageList');const packageFormFocused=pack.contains(document.activeElement);if(!packageFormFocused){pack.replaceChildren();
- if(!state.packages.length)pack.append(el('p','muted','暂无经过审核的版本包，请上传 ZIP。'));
- for(const p of state.packages){
- const isPortable=p.product.startsWith('portable-p-');
- const profile=isPortable?state.portableProfiles.find(x=>p.product==='portable-'+x.id):null;
- const display=isPortable?(profile?.display_name||'未找到程序定义'):p.product;
- const r=el('div','template-card'),left=el('div');
- left.append(el('strong','',display+' · '+p.version),
-   el('small','',`SHA256: ${p.sha256.slice(0,20)}… · ${Math.round(p.bytes/1024/1024*100)/100} MB`));
- if(isPortable&&profile){
-   left.append(el('small','',`目标：C:\\dsh\\${profile.folder} · 启动：${profile.launcher}`),
-     el('small','',`本版本识别来源：${p.version_source||'auto'} · Guest 将独立核对 EXE / VERSION`));
- }
- const controls=el('div','snap-toolbar');const select=el('select');select.setAttribute('aria-label',`选择更新 ${p.product} 的客户虚拟机`);
- select.append(new Option(isPortable?'选择装有对应程序的客户机':p.product==='snowluma'?'选择在线客户虚拟机':'选择已配置适配器的虚拟机',''));
- const eligible=state.vms.filter(vm=>{
-   const g=guests.get(vm.id);
-   const online=vm.state==='READY'&&g&&!g.revoked_at&&g.last_seen&&
-       (Date.now()-new Date(g.last_seen).getTime())<600000;
-   if(!online)return false;
-   if(isPortable){
-     if(!profile)return false;
-     const agent=(g.reported?.guest_agent||'').split('.').map(Number);
-     const supported=agent.length>=3&&(agent[0]>2||(agent[0]===2&&(agent[1]>0||agent[2]>=25)));
-     return supported&&Object.keys(g.reported?.portable_software||{}).some(x=>
-       x.toLocaleLowerCase()===profile.folder.toLocaleLowerCase());
-   }
-   return p.product==='snowluma'||
-      ({dsh:['desktop_installer','npm_global'],'fish-soul':['dsh_plugin_user','dsh_plugin']}[p.product]||[])
-        .includes(g.reported?.install_modes?.[p.product]);
+const softwareGuestUI={page:1,pageSize:18,expanded:new Set(),releaseExpanded:new Set()};
+
+function renderGuestInventory(){
+ const root=$('guestList');if(!root)return;
+ const find=$('softwareGuestSearch').value.trim().toLocaleLowerCase();
+ const filter=$('softwareGuestFilter').value;
+ const guestMap=new Map(state.guests.map(g=>[g.vm_id,g]));
+ const current=state.vms.map(vm=>{
+   const guest=guestMap.get(vm.id);
+   const registered=!!guest&&!guest.revoked_at;
+   const online=registered&&!!guest.last_seen&&
+     (Date.now()-new Date(guest.last_seen).getTime())<=5*60000;
+   const appList=Object.entries(guest?.reported?.portable_software||{});
+   return {vm,guest,registered,online,appList};
+ }).filter(entry=>{
+   const status=entry.online?'online':entry.registered?'offline':'unregistered';
+   if(filter!=='all'&&filter!==status)return false;
+   const apps=entry.appList.map(([name,meta])=>name+' '+(meta?.version_hint||'')).join(' ');
+   const match=[entry.vm.name,entry.vm.customer_ref||'',entry.vm.id,
+     ...(entry.guest?.reported?.ipv4_addresses||[]),apps].join(' ').toLocaleLowerCase();
+   return !find||match.includes(find);
  });
- eligible.forEach(vm=>select.add(new Option(vm.name,vm.id)));
- select.value=eligible.some(vm=>vm.id===state.packageSelections[p.id])?state.packageSelections[p.id]:'';
- select.addEventListener('change',()=>{state.packageSelections[p.id]=select.value;});
- let installInput=null;
- if(p.product==='snowluma'){
-   installInput=el('input');installInput.setAttribute('aria-label','SnowLuma 安装目录');
-   installInput.placeholder='目标安装目录';installInput.value=state.packageDirectories[p.id]||'C:\\dsh\\SnowLuma-v2.4.0-win-x64';
-   installInput.style.minWidth='285px';installInput.addEventListener('input',()=>{state.packageDirectories[p.id]=installInput.value;});
-   controls.append(installInput);
+ const pages=Math.max(1,Math.ceil(current.length/softwareGuestUI.pageSize));
+ softwareGuestUI.page=Math.max(1,Math.min(softwareGuestUI.page,pages));
+ const visible=current.slice((softwareGuestUI.page-1)*softwareGuestUI.pageSize,
+                              softwareGuestUI.page*softwareGuestUI.pageSize);
+ $('softwareGuestCount').textContent='筛选 '+current.length+' / '+state.vms.length+' 台'+
+   ' · 在线 '+current.filter(e=>e.online).length+' 台';
+ $('softwareGuestPage').textContent='第 '+softwareGuestUI.page+' / '+pages+' 页';
+ $('softwareGuestPrev').disabled=softwareGuestUI.page<=1;
+ $('softwareGuestNext').disabled=softwareGuestUI.page>=pages;
+ root.replaceChildren();
+ if(!state.capabilities?.guest_gateway_configured){
+   root.append(el('p','warning','Guest 网关尚未正确配置，自动注册和版本上报可能无法工作。'));
  }
- controls.append(select,btn('下发更新','primary small',async()=>{
-   if(!select.value)return toast('先选择一个有 Guest Agent 的虚拟机',true);
-   const vm=state.vms.find(x=>x.id===select.value);
-   const directory=installInput?.value.trim()||'';
-   if(p.product==='snowluma' && !/^C:\\dsh\\SnowLuma[^\r\n]*$/i.test(directory))return toast('SnowLuma 路径必须在 C:\\dsh\\ 下，文件夹名以 SnowLuma 开头',true);
-   const summary=isPortable
-     ?`对 ${vm.name} 更新 ${display} · ${p.version}？\n目标：C:\\dsh\\${profile.folder}\n\n仅停止该目录拥有的进程。原来运行会启动；原来未运行保持关闭。更新失败自动恢复原目录。请先做好 VM 快照。`
-     :p.product==='snowluma'
-     ?`对 ${vm.name} 更新 SnowLuma ${p.version}？\n目标目录：${directory}\n停止、备份、替换并验证。请先做好 VM 快照。`
-     :`对 ${vm.name} 下发 ${p.product} ${p.version} 更新？\n请确认客户机已配置对应安装适配器及备份。`;
-   if(!confirm(summary))return;
-   try{const result=await request(`/api/vms/${encodeURIComponent(vm.id)}/software-update`,'POST',{package_id:p.id,install_dir:p.product==='snowluma'?directory:null,confirm_backup_and_compatibility:true});toast('软件更新任务：'+result.task_id);await refresh();}
-   catch(e){toast(e.message,true);}
- },eligible.length===0));
- if(!eligible.length)controls.append(el('span','muted',
-   isPortable?'无符合条件的在线 Guest。请升级 Guest Agent 至 v2.0.25，并等待识别 C:\\dsh 程序目录。':
-   `${p.product}：无在线 Guest 或需要在客户机配置适配器`));
- if(isPortable&&eligible.length>1)controls.append(btn('更新全部在线客户机','ghost small',async()=>{
-   if(!confirm(`确认对 ${eligible.length} 台在线客户机依次下发 ${display} ${p.version}？\n\n每台仅执行一次；原本未运行的软件更新后不启动，失败不会自动重复执行。`))return;
-   let succeeded=0,failures=[];
-   for(const vm of eligible){
-     try{
-       await request(`/api/vms/${encodeURIComponent(vm.id)}/software-update`,'POST',{
-         package_id:p.id,confirm_backup_and_compatibility:true
-       });
-       succeeded++;
-     }catch(e){failures.push(vm.name+': '+e.message);}
+ if(!visible.length){root.append(el('p','muted','没有符合筛选条件的客户机'));return;}
+ for(const {vm,guest,registered,online,appList} of visible){
+   const details=el('details','software-guest-row');
+   details.dataset.id=vm.id;details.open=softwareGuestUI.expanded.has(vm.id);
+   details.addEventListener('toggle',()=>{
+     if(details.open)softwareGuestUI.expanded.add(vm.id);
+     else softwareGuestUI.expanded.delete(vm.id);
+   });
+   const summary=el('summary','software-guest-summary');
+   summary.append(el('strong','software-guest-name',vm.name));
+   const status=el('span','software-guest-state'+(online?' is-online':registered?' is-offline':' is-missing'),
+     online?'在线':registered?'离线':'未注册');
+   summary.append(status);
+   summary.append(el('span','software-guest-brief','Agent '+
+     (guest?.reported?.guest_agent||'未上报')+' · 软件 '+appList.length+' 项'));
+   if(appList.length){
+     const info=appList.slice(0,2).map(([name,value])=>name+' '+(value?.version_hint||'版本未知')).join(' · ');
+     summary.append(el('span','software-guest-brief software-guest-version',info+
+       (appList.length>2?' 等':'') ));
    }
-   toast('已排队 '+succeeded+'/'+eligible.length+' 台'+(failures.length?'；失败：'+failures.join('、'):''),
-         Boolean(failures.length));
-   await refresh();
- }));
- controls.append(btn('删除更新包','danger small',async()=>{
-   if(!confirm(`确定删除 ${p.product} ${p.version} 更新包？\n删除后不能再次下发此包，也无法使用它回滚。\n已完成任务的历史记录仍会保留。`))return;
-   try{await request('/api/fleet/packages/'+encodeURIComponent(p.id),'DELETE');
-     delete state.packageSelections[p.id];delete state.packageDirectories[p.id];
-     document.activeElement?.blur?.();toast('更新包已删除');await refresh();}
-   catch(e){toast('无法删除：'+e.message,true);}
- }));
- r.append(left,controls);pack.append(r);
- } }
+   details.append(summary);
+   const body=el('div','software-guest-details');
+   const ip=(guest?.reported?.ipv4_addresses||[]).join('、')||'无';
+   const wss=guest?.wss?.state||'never_connected';
+   body.append(el('p','muted',
+      '客户：'+(vm.customer_ref||'未设置')+' · IP：'+ip+' · WSS：'+wss+
+      ' · 最后心跳：'+(guest?.last_seen?VMO_BJT(guest.last_seen):'无')));
+   body.append(el('p','muted','VM ID：'+vm.id));
+   if(appList.length){
+     const apps=el('div','software-app-tags');
+     appList.forEach(([name,item])=>{
+       apps.append(el('span','software-app-tag',name+' · '+(item?.version_hint||'版本未知')+
+         (item?.version_verified?'':'（未核验）')));
+     });
+     body.append(apps);
+   }else body.append(el('p','muted','未发现可识别的软件目录；请核对 C:\\dsh 和 Guest Agent v2.0.25+'));
+   details.append(body);root.append(details);
+ }
+}
+
+function renderFleet(){
+ renderGuestInventory();
+ const guestMap=new Map(state.guests.map(x=>[x.vm_id,x]));
+ const pack=$('packageList');
+ if(!pack.contains(document.activeElement)){
+   pack.replaceChildren();
+   const releases=state.packages.filter(p=>p.product.startsWith('portable-p-'));
+   if(!releases.length)pack.append(el('p','muted','暂时没有统一便携软件 ZIP 版本包。'));
+   for(const p of releases){
+     const profile=state.portableProfiles.find(x=>p.product==='portable-'+x.id);
+     if(!profile)continue;
+     const eligible=state.vms.filter(machine=>{
+       const g=guestMap.get(machine.id);
+       if(machine.state!=='READY'||!g||g.revoked_at||!g.last_seen||
+          Date.now()-new Date(g.last_seen).getTime()>600000)return false;
+       const ver=String(g.reported?.guest_agent||'').split('.').map(Number);
+       if(ver.length!==3||ver.some(x=>!Number.isInteger(x))||
+          (ver[0]===2&&ver[1]===0&&ver[2]<25)||ver[0]<2)return false;
+       return Object.keys(g.reported?.portable_software||{}).some(name=>
+         name.toLocaleLowerCase()===profile.folder.toLocaleLowerCase());
+     });
+     const details=el('details','software-release');
+     details.open=softwareGuestUI.releaseExpanded.has(p.id);
+     details.addEventListener('toggle',()=>{
+       if(details.open)softwareGuestUI.releaseExpanded.add(p.id);
+       else softwareGuestUI.releaseExpanded.delete(p.id);
+     });
+     const summary=el('summary','software-guest-summary');
+     summary.append(el('strong','software-guest-name',profile.display_name+' · '+p.version),
+       el('span','software-guest-brief','目标 C:\\dsh\\'+profile.folder),
+       el('span','software-guest-state'+(eligible.length?' is-online':' is-offline'),
+          '可更新 '+eligible.length+' 台'));
+     details.append(summary);
+     const body=el('div','software-guest-details');
+     body.append(el('p','muted','启动：'+profile.launcher+' · 版本来源：'+
+       (p.version_source||'未知')+' · SHA-256：'+p.sha256.slice(0,24)+'…'));
+     const controls=el('div','software-release-actions');
+     const select=el('select');select.setAttribute('aria-label','选择要更新的客户机');
+     select.append(new Option('选择目标客户机',''));
+     eligible.forEach(machine=>select.add(new Option(machine.name,machine.id)));
+     select.value=eligible.some(x=>x.id===state.packageSelections[p.id])?
+       state.packageSelections[p.id]:'';
+     select.addEventListener('change',()=>{state.packageSelections[p.id]=select.value;});
+     const submit=async selected=>{
+       const machine=state.vms.find(x=>x.id===selected);if(!machine)throw Error('目标客户机无效');
+       return request('/api/vms/'+encodeURIComponent(machine.id)+'/software-update','POST',
+         {package_id:p.id,confirm_backup_and_compatibility:true});
+     };
+     controls.append(select,btn('下发更新','primary small',async()=>{
+       if(!select.value)return toast('先选择客户机',true);
+       const machine=state.vms.find(x=>x.id===select.value);
+       if(!confirm('对 '+machine.name+' 更新 '+profile.display_name+' '+p.version+'？\n'+
+         '仅匹配软件原目录；原来关闭则更新后不启动。请确认已备份或制作快照。'))return;
+       try{const result=await submit(select.value);toast('任务已排队：'+result.task_id);await refresh();}
+       catch(e){toast('下发失败：'+e.message,true);}
+     },!eligible.length));
+     if(eligible.length>1)controls.append(btn('批量更新 '+eligible.length+' 台','ghost small',async()=>{
+       if(!confirm('对 '+eligible.length+' 台在线客户机下发 '+profile.display_name+
+         ' '+p.version+' 更新任务？\n每台独立校验和回滚；不对未知状态自动重试。'))return;
+       let queued=0;const failed=[];
+       for(const machine of eligible){
+         try{await submit(machine.id);queued++;}
+         catch(e){failed.push(machine.name+': '+e.message);}
+       }
+       toast('已排队 '+queued+' / '+eligible.length+' 台'+
+         (failed.length?'；失败：'+failed.join('、'):''),
+         Boolean(failed.length));await refresh();
+     }));
+     controls.append(btn('删除版本包','danger small',async()=>{
+       if(!confirm('删除 '+profile.display_name+' '+p.version+' 的 ZIP 更新包？正在执行及绑定的任务将阻止删除。'))return;
+       try{await request('/api/fleet/packages/'+encodeURIComponent(p.id),'DELETE');
+         delete state.packageSelections[p.id];
+         softwareGuestUI.releaseExpanded.delete(p.id);
+         toast('版本包已删除');await refresh();
+       }catch(e){toast(e.message,true);}
+     }));
+     body.append(controls);
+     if(!eligible.length)body.append(el('p','muted','暂无符合条件的在线 Guest；需要 Agent v2.0.25+ 及匹配的 C:\\dsh 程序目录。'));
+     details.append(body);pack.append(details);
+   }
+ }
  const tasks=$('updateTaskList');tasks.replaceChildren();if(!state.updateTasks.length)tasks.append(el('p','muted','暂无更新任务'));
  for(const t of state.updateTasks){const vm=state.vms.find(x=>x.id===t.vm_id);let line=el('div','template-card');
    const stepLabels={starting:'开始更新',downloaded:'更新包已下载',staged:'已完成文件预备',stopped:'程序已停止',swapped:'已切换新版本',healthy:'按原运行状态恢复并通过进程检查',rolled_back_healthy:'更新失败，已恢复旧版本',recovery_required:'自动恢复失败，需人工处理',verified:'已完成验证'};
    const statusMessage=t.status==='QUEUED'?'等待 Guest Agent 领取':t.status==='CLAIMED'?'Guest 已领取，等待阶段回报':t.status==='RUNNING'?(stepLabels[t.phase]||'正在执行')+' · 最近报告 '+VMO_BJT(t.progress_at): (t.message||'已结束');
    line.append(el('div','',`${vm?.name||t.vm_id} · ${t.kind||'UPDATE'} · ${statusName[t.status]||t.status} · ${t.status==='VERIFY_REQUIRED'?'程序或插件命令已执行，但真实运行版本尚未核验。请查看应用上报版本。':statusMessage}`));
-   if(vm && t.status==='SUCCEEDED' && (!t.kind||t.kind==='UPDATE') && !(t.options_json||'').includes('snowluma_direct') && state.packages.some(p=>p.id===t.package_id && p.product==='snowluma')){
-     line.append(btn('回滚便携版程序','warn small',async()=>{
-       const typed=prompt(`仅对已配置的 SnowLuma 受管便携版提供自动重启回滚。DSH 安装器和插件请使用保留的备份人工恢复。输入 ${vm.name} 确认：`);
-       if(typed!==vm.name)return;
-       try{const r=await request(`/api/vms/${encodeURIComponent(vm.id)}/software-rollback/${encodeURIComponent(t.id)}`,'POST',{
-         package_id:t.package_id,confirm_backup_and_compatibility:true});toast('回滚任务已下发：'+r.task_id);await refresh();}
-       catch(e){toast(e.message,true);}
-     }));
-   }tasks.append(line);}
+tasks.append(line);}
  renderPager('updatesPager',state.updatesPaged,page=>{state.updatePage=page;refresh();});
  const history=$('reinstallHistory');history.replaceChildren();if(!state.reinstalls.length)history.append(el('p','muted','暂无重装记录'));
  for(const x of state.reinstalls.slice(0,20)){const vm=state.vms.find(v=>v.id===x.vm_id);history.append(el('div','template-card',`${vm?.name||x.vm_id} · ${x.status} · ${x.backup_deleted_at?'旧备份已清理：'+VMO_BJT(x.backup_deleted_at):'旧系统备份：'+(x.backup_path||'未生成')}`));}
@@ -651,13 +622,10 @@ window.addEventListener('DOMContentLoaded',async()=>{
      $('reinstallDialog').close();navigate('jobs');
    }catch(err){toast('重装提交失败：'+err.message,true);}
  });
- $('pluginCommandForm').addEventListener('submit',async e=>{
-   e.preventDefault();const vm=$('pluginVm').value,version=$('pluginVersion').value.trim(),command=$('pluginCommand').value.trim();
-   if(!vm)return toast('请先选择在线虚拟机',true);
-   if(!confirm(`对所选 VM 下发 DSH 插件更新命令？\n\n${command}\n\n目标版本：${version}\n将在已登录 Windows 用户会话执行；请确认命令及目标 Profile 正确。`))return;
-   try{const x=await request(`/api/vms/${encodeURIComponent(vm)}/plugin-command-update`,'POST',{version,command,confirm:true});toast('插件更新任务已提交：'+x.task_id);await refresh();}
-   catch(err){toast('插件命令未下发：'+err.message,true);}
- });
+ $('softwareGuestSearch').addEventListener('input',()=>{softwareGuestUI.page=1;renderGuestInventory();});
+ $('softwareGuestFilter').addEventListener('change',()=>{softwareGuestUI.page=1;renderGuestInventory();});
+ $('softwareGuestPrev').addEventListener('click',()=>{if(softwareGuestUI.page>1){softwareGuestUI.page--;renderGuestInventory();}});
+ $('softwareGuestNext').addEventListener('click',()=>{softwareGuestUI.page++;renderGuestInventory();});
  $('portableUploadForm').addEventListener('submit',async ev=>{
    ev.preventDefault();
    const file=$('portableZip').files[0],name=$('portableName').value.trim(),
@@ -713,22 +681,7 @@ window.addEventListener('DOMContentLoaded',async()=>{
    }catch(error){toast('软件包校验或登记失败：'+error.message,true);}
    finally{button.disabled=false;button.textContent='上传并登记软件更新';}
  });
- $('uploadForm').addEventListener('submit',async e=>{
-   e.preventDefault();const f=$('packageFile').files[0],product=$('packageProduct').value,version=$('packageVersion').value.trim();
-   if(!f||!f.name.toLowerCase().endsWith('.zip'))return toast('只能上传 ZIP',true);
-   if(f.size>512*1024*1024)return toast('最大 512 MB',true);
-   if(!confirm(`确认这是来自可信来源、已检查且与客户软件兼容的 ${product} ${version} 发布包？`))return;
-   try{const res=await fetch(`/api/fleet/packages/${encodeURIComponent(product)}/${encodeURIComponent(version)}`,{
-     method:'POST',credentials:'same-origin',headers:{'X-UI-CSRF':state.csrf,'Content-Type':'application/zip'},body:f});
-     const data=await res.json();if(!res.ok)throw Error(data.detail||'上传失败');
-     $('uploadForm').reset();toast('版本包上传成功：'+data.sha256);await refresh();
-   }catch(err){toast(err.message,true);}
- });
- $('dialogClose').addEventListener('click',()=>$('vmDialog').close());$('screenClose').addEventListener('click',()=>$('screenDialog').close());$('testClose').addEventListener('click',()=>$('testDialog').close());$('testCancel').addEventListener('click',()=>$('testDialog').close());
- $('testRestore').addEventListener('change',()=>{$('restoreConfirmRow').hidden=!$('testRestore').checked;});
- $('testForm').addEventListener('submit',async ev=>{ev.preventDefault();const id=state.testVmId;const restore=$('testRestore').checked;if(restore&&!$('testRestoreConfirm').checked){toast('恢复快照需要勾选数据风险确认',true);return;}
-  try{await submitJob(`/api/vms/${encodeURIComponent(id)}/acceptance-test`,'POST',{confirm_test_vm:$('testConfirmed').checked,test_power:$('testPower').checked,include_restore:restore,confirm_data_loss:restore&&$('testRestoreConfirm').checked});$('testDialog').close();navigate('jobs');}catch(e){toast(e.message,true);}
- });
+ $('dialogClose').addEventListener('click',()=>$('vmDialog').close());
  $('cloneForm').addEventListener('submit',async ev=>{ev.preventDefault();const name=$('cloneName').value.trim(),template_id=$('cloneTemplate').value,customer_ref=$('cloneCustomer').value.trim()||null;
   const autoStart=$('cloneAutoStart').checked,screen=$('cloneEnableScreen').checked,unattended=$('cloneUnattended').checked;
   if(unattended && !(state.templates.find(t=>t.id===template_id)?.oobe_bootstrap_version>=2))return toast('所选模板未安装 V1.2 Administrator OOBE 引导，请选择新版封存模板或取消无人值守',true);

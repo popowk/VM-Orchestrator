@@ -2,10 +2,5 @@
   "server_url": "https://192.168.100.1:8766",
   "vm_id": "REPLACE-WITH-VM-ID",
   "enrollment_token": "REPLACE-ONE-TIME-TOKEN",
-  "ca_bundle": "C:\\ProgramData\\VMO\\host-only-ca.pem",
-  "installations": {
-    "dsh": {"mode": "disabled"},
-    "fish-soul": {"mode": "disabled"},
-    "snowluma": {"mode": "portable", "program_dir": "C:\\SnowLuma", "required_files": ["launcher.bat"], "preserve_relative": ["config", "data"]}
-  }
+  "ca_bundle": "C:\\ProgramData\\VMO\\host-only-ca.pem"
 }
