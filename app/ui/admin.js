@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.53 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.54 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -17,7 +17,7 @@ function VMOConnectEvents(){
 }
 function VMOCloseEvents(){if(VMOEventSource){VMOEventSource.close();VMOEventSource=null;}}
 const $ = id => document.getElementById(id);
-const state = { csrf:'', templates:[], vms:[], jobs:[], capabilities:null, testVmId:null, viewingVm:null, activePage:'overview', busy:false, watched:new Set(), defaultTemplate:null, guests:[], packages:[], updateTasks:[], reinstalls:[], reinstallVm:null, packageSelections:{}, packageDirectories:{}, jobsPage:1, updatePage:1, jobsPaged:{items:[],page:1,pages:1,total:0}, updatesPaged:{items:[],page:1,pages:1,total:0} };
+const state = { csrf:'', templates:[], vms:[], jobs:[], capabilities:null, testVmId:null, viewingVm:null, activePage:'overview', busy:false, watched:new Set(), defaultTemplate:null, guests:[], packages:[], portableProfiles:[], updateTasks:[], reinstalls:[], reinstallVm:null, packageSelections:{}, packageDirectories:{}, jobsPage:1, updatePage:1, jobsPaged:{items:[],page:1,pages:1,total:0}, updatesPaged:{items:[],page:1,pages:1,total:0} };
 const pages = { overview:'管理概览', vms:'虚拟机管理', templates:'黄金模板', updates:'软件更新', jobs:'任务记录', remote:'远程运维', clients:'思博客户服务', system:'系统更新', cleanup:'空间清理' };
 const statusName = { READY:'就绪', CREATING:'克隆中', ERROR:'异常', DELETING:'删除中', REINSTALLING:'重装中', REINSTALL_ERROR:'重装异常', DELETE_ERROR:'删除失败', SEALED_ATTESTED:'已封存', CANDIDATE:'待确认', ARCHIVED:'已归档', FILES_PURGING:'磁盘清理异常', FILES_DELETED:'文件已清理（保留历史）', POWERED_ON:'运行中', POWERED_OFF:'已关机', SUSPENDED:'挂起', UNKNOWN:'未知', QUEUED:'排队中', RUNNING:'执行中', SUCCEEDED:'成功', VERIFY_REQUIRED:'已执行，待版本核验', FAILED:'失败' };
 function el(tag, cls='', text='') { const v=document.createElement(tag); if(cls)v.className=cls; if(text!==undefined && text!==null)v.textContent=String(text); return v; }
@@ -57,13 +57,13 @@ function navigate(page){
  else refresh();
 }
 async function refresh(){if(state.busy || !state.csrf)return;state.busy=true; try{
-  const [tpl,vms,jobs,caps,defaults,guests,packages,updatesPaged,reinstalls,jobsPaged] = await Promise.all([
+  const [tpl,vms,jobs,caps,defaults,guests,packages,profiles,updatesPaged,reinstalls,jobsPaged] = await Promise.all([
     request('/api/templates'),request('/api/vms'),request('/api/jobs'),request('/api/host/capabilities'),
-    request('/api/fleet/default-template'),request('/api/fleet/guests'),request('/api/fleet/packages'),
+    request('/api/fleet/default-template'),request('/api/fleet/guests'),request('/api/fleet/packages'),request('/api/fleet/portable/profiles'),
     request(`/api/fleet/updates?paged=true&page=${state.updatePage}&page_size=15`),request('/api/fleet/reinstalls'),
     request(`/api/jobs?paged=true&page=${state.jobsPage}&page_size=20`)]);
   state.templates=tpl;state.vms=vms;state.jobs=jobs;state.capabilities=caps;
-  state.defaultTemplate=defaults.template_id;state.guests=guests;state.packages=packages;state.updateTasks=updatesPaged.items;state.updatesPaged=updatesPaged;state.updatePage=updatesPaged.page;state.jobsPaged=jobsPaged;state.jobsPage=jobsPaged.page;state.reinstalls=reinstalls;
+  state.defaultTemplate=defaults.template_id;state.guests=guests;state.packages=packages;state.portableProfiles=profiles;state.updateTasks=updatesPaged.items;state.updatesPaged=updatesPaged;state.updatePage=updatesPaged.page;state.jobsPaged=jobsPaged;state.jobsPage=jobsPaged.page;state.reinstalls=reinstalls;
   // Only redraw the page currently visible; never replace hidden forms,
   // expanded task details or a customer application viewer on a timer tick.
   if(state.activePage==='overview')renderOverview();
@@ -460,6 +460,8 @@ function renderFleet(){
      const last=g?.last_seen?VMO_BJT(g.last_seen):'未上线';
      const versions=Object.entries(g?.reported?.versions||{}).map(([k,v])=>`${k} ${v}（已上报）`).join(' · ');
      const discovered=Object.entries(g?.reported?.detected_software||{}).map(([k,v])=>`${k}${v.version_hint?' '+v.version_hint:''}（${v.version_verified?'已验证':'仅按目录推测'}）`).join(' · ');
+     const portable=Object.entries(g?.reported?.portable_software||{}).map(([k,v])=>
+       k+' '+(v.version_hint||'版本未知')+'（'+(v.version_verified?'版本已识别':'待确认')+'）').join(' · ');
      const ips=(g?.reported?.ipv4_addresses||[]).join('、');
      const minutes=g?.last_seen?(Date.now()-new Date(g.last_seen).getTime())/60000:Infinity;
      const online=current&&minutes<=5;
@@ -468,8 +470,9 @@ function renderFleet(){
      const wssLabel=({connected:'WSS 已连接',disconnected:'WSS 已断开',heartbeat_timeout:'WSS 心跳超时',never_connected:'WSS 未连接'})[wssState]||wssState;
      info.append(el('strong','',vm.name),el('small','',`${liveState} · ${wssLabel}${current?` · Agent ${g.agent_id} · 最近心跳 ${last}`:''}`),
         el('small','',`IPv4：${ips||'尚未上报'}（由客户机上报，仅供识别，不用于鉴权）`),
-        el('small','',versions||discovered||'未检测到可验证的软件版本；需在 Guest 配置路径或版本文件'));
+        el('small','',portable||versions||discovered||'未检测到可验证的软件版本；可上传 ZIP 以登记更新'));
      if(versions&&discovered)info.append(el('small','',discovered));
+     if(portable&&versions)info.append(el('small','',portable));
      if(current)info.append(el('small','',`更新适配器：${Object.entries(g.reported?.install_modes||{}).map(([k,v])=>k+': '+v).join(' · ')||'尚未上报'}`));
      const acts=el('div','snap-actions');acts.append(badge(wssState==='connected'?'READY':'UNKNOWN'));
      acts.append(btn('下载专属安装包','primary small',async()=>{
@@ -507,10 +510,35 @@ function renderFleet(){
  }
  const pack=$('packageList');const packageFormFocused=pack.contains(document.activeElement);if(!packageFormFocused){pack.replaceChildren();
  if(!state.packages.length)pack.append(el('p','muted','暂无经过审核的版本包，请上传 ZIP。'));
- for(const p of state.packages){const r=el('div','template-card'),left=el('div');left.append(el('strong','',`${p.product} ${p.version}`),el('small','',`SHA256: ${p.sha256.slice(0,20)}… · ${Math.round(p.bytes/1024/1024*100)/100} MB`));
+ for(const p of state.packages){
+ const isPortable=p.product.startsWith('portable-p-');
+ const profile=isPortable?state.portableProfiles.find(x=>p.product==='portable-'+x.id):null;
+ const display=isPortable?(profile?.display_name||'未找到程序定义'):p.product;
+ const r=el('div','template-card'),left=el('div');
+ left.append(el('strong','',display+' · '+p.version),
+   el('small','',`SHA256: ${p.sha256.slice(0,20)}… · ${Math.round(p.bytes/1024/1024*100)/100} MB`));
+ if(isPortable&&profile){
+   left.append(el('small','',`目标：C:\\dsh\\${profile.folder} · 启动：${profile.launcher}`),
+     el('small','',`识别：${profile.version_source||'auto'} · 提交后由 Guest 校验并识别 EXE / VERSION`));
+ }
  const controls=el('div','snap-toolbar');const select=el('select');select.setAttribute('aria-label',`选择更新 ${p.product} 的客户虚拟机`);
- select.append(new Option(p.product==='snowluma'?'选择在线客户虚拟机':'选择已配置适配器的虚拟机',''));
- const eligible=state.vms.filter(vm=>{const g=guests.get(vm.id);return vm.state==='READY'&&g&&!g.revoked_at&&g.last_seen&&(Date.now()-new Date(g.last_seen).getTime())<600000&&(p.product==='snowluma'||({dsh:['desktop_installer','npm_global'],'fish-soul':['dsh_plugin_user','dsh_plugin']}[p.product]||[]).includes(g.reported?.install_modes?.[p.product]));});
+ select.append(new Option(isPortable?'选择装有对应程序的客户机':p.product==='snowluma'?'选择在线客户虚拟机':'选择已配置适配器的虚拟机',''));
+ const eligible=state.vms.filter(vm=>{
+   const g=guests.get(vm.id);
+   const online=vm.state==='READY'&&g&&!g.revoked_at&&g.last_seen&&
+       (Date.now()-new Date(g.last_seen).getTime())<600000;
+   if(!online)return false;
+   if(isPortable){
+     if(!profile)return false;
+     const agent=(g.reported?.guest_agent||'').split('.').map(Number);
+     const supported=agent.length>=3&&(agent[0]>2||(agent[0]===2&&(agent[1]>0||agent[2]>=25)));
+     return supported&&Object.keys(g.reported?.portable_software||{}).some(x=>
+       x.toLocaleLowerCase()===profile.folder.toLocaleLowerCase());
+   }
+   return p.product==='snowluma'||
+      ({dsh:['desktop_installer','npm_global'],'fish-soul':['dsh_plugin_user','dsh_plugin']}[p.product]||[])
+        .includes(g.reported?.install_modes?.[p.product]);
+ });
  eligible.forEach(vm=>select.add(new Option(vm.name,vm.id)));
  select.value=eligible.some(vm=>vm.id===state.packageSelections[p.id])?state.packageSelections[p.id]:'';
  select.addEventListener('change',()=>{state.packageSelections[p.id]=select.value;});
@@ -526,14 +554,33 @@ function renderFleet(){
    const vm=state.vms.find(x=>x.id===select.value);
    const directory=installInput?.value.trim()||'';
    if(p.product==='snowluma' && !/^C:\\dsh\\SnowLuma[^\r\n]*$/i.test(directory))return toast('SnowLuma 路径必须在 C:\\dsh\\ 下，文件夹名以 SnowLuma 开头',true);
-   const summary=p.product==='snowluma'
-     ?`对 ${vm.name} 更新 SnowLuma ${p.version}？\n目标目录：${directory}\n将停止匹配的进程、备份并覆盖、在登录用户会话重新启动及检查版本。请先做好 VM 快照。`
-     :`对 ${vm.name} 下发 ${p.product} ${p.version} 更新？\n请确认客户机已配置签名安装器适配器及备份。`;
+   const summary=isPortable
+     ?`对 ${vm.name} 更新 ${display} · ${p.version}？\n目标：C:\\dsh\\${profile.folder}\n\n仅停止该目录拥有的进程。原来运行会启动；原来未运行保持关闭。更新失败自动恢复原目录。请先做好 VM 快照。`
+     :p.product==='snowluma'
+     ?`对 ${vm.name} 更新 SnowLuma ${p.version}？\n目标目录：${directory}\n停止、备份、替换并验证。请先做好 VM 快照。`
+     :`对 ${vm.name} 下发 ${p.product} ${p.version} 更新？\n请确认客户机已配置对应安装适配器及备份。`;
    if(!confirm(summary))return;
    try{const result=await request(`/api/vms/${encodeURIComponent(vm.id)}/software-update`,'POST',{package_id:p.id,install_dir:p.product==='snowluma'?directory:null,confirm_backup_and_compatibility:true});toast('软件更新任务：'+result.task_id);await refresh();}
    catch(e){toast(e.message,true);}
  },eligible.length===0));
- if(!eligible.length)controls.append(el('span','muted',`${p.product}：无在线 Guest 或需要在客户机配置适配器`));
+ if(!eligible.length)controls.append(el('span','muted',
+   isPortable?'无符合条件的在线 Guest。请升级 Guest Agent 至 v2.0.25，并等待识别 C:\\dsh 程序目录。':
+   `${p.product}：无在线 Guest 或需要在客户机配置适配器`));
+ if(isPortable&&eligible.length>1)controls.append(btn('更新全部在线客户机','ghost small',async()=>{
+   if(!confirm(`确认对 ${eligible.length} 台在线客户机依次下发 ${display} ${p.version}？\n\n每台仅执行一次；原本未运行的软件更新后不启动，失败不会自动重复执行。`))return;
+   let succeeded=0,failures=[];
+   for(const vm of eligible){
+     try{
+       await request(`/api/vms/${encodeURIComponent(vm.id)}/software-update`,'POST',{
+         package_id:p.id,confirm_backup_and_compatibility:true
+       });
+       succeeded++;
+     }catch(e){failures.push(vm.name+': '+e.message);}
+   }
+   toast('已排队 '+succeeded+'/'+eligible.length+' 台'+(failures.length?'；失败：'+failures.join('、'):''),
+         Boolean(failures.length));
+   await refresh();
+ }));
  controls.append(btn('删除更新包','danger small',async()=>{
    if(!confirm(`确定删除 ${p.product} ${p.version} 更新包？\n删除后不能再次下发此包，也无法使用它回滚。\n已完成任务的历史记录仍会保留。`))return;
    try{await request('/api/fleet/packages/'+encodeURIComponent(p.id),'DELETE');
@@ -545,7 +592,7 @@ function renderFleet(){
  } }
  const tasks=$('updateTaskList');tasks.replaceChildren();if(!state.updateTasks.length)tasks.append(el('p','muted','暂无更新任务'));
  for(const t of state.updateTasks){const vm=state.vms.find(x=>x.id===t.vm_id);let line=el('div','template-card');
-   const stepLabels={starting:'开始更新',downloaded:'更新包已下载',staged:'已完成文件预备',stopped:'程序已停止',swapped:'已切换新版本',healthy:'重启并通过健康检查',rolled_back_healthy:'更新失败，已恢复旧版本',recovery_required:'自动恢复失败，需人工处理',verified:'已完成验证'};
+   const stepLabels={starting:'开始更新',downloaded:'更新包已下载',staged:'已完成文件预备',stopped:'程序已停止',swapped:'已切换新版本',healthy:'按原运行状态恢复并通过进程检查',rolled_back_healthy:'更新失败，已恢复旧版本',recovery_required:'自动恢复失败，需人工处理',verified:'已完成验证'};
    const statusMessage=t.status==='QUEUED'?'等待 Guest Agent 领取':t.status==='CLAIMED'?'Guest 已领取，等待阶段回报':t.status==='RUNNING'?(stepLabels[t.phase]||'正在执行')+' · 最近报告 '+VMO_BJT(t.progress_at): (t.message||'已结束');
    line.append(el('div','',`${vm?.name||t.vm_id} · ${t.kind||'UPDATE'} · ${statusName[t.status]||t.status} · ${t.status==='VERIFY_REQUIRED'?'程序或插件命令已执行，但真实运行版本尚未核验。请查看应用上报版本。':statusMessage}`));
    if(vm && t.status==='SUCCEEDED' && (!t.kind||t.kind==='UPDATE') && !(t.options_json||'').includes('snowluma_direct') && state.packages.some(p=>p.id===t.package_id && p.product==='snowluma')){
