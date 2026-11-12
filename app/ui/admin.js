@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.55 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.56 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -17,7 +17,7 @@ function VMOConnectEvents(){
 }
 function VMOCloseEvents(){if(VMOEventSource){VMOEventSource.close();VMOEventSource=null;}}
 const $ = id => document.getElementById(id);
-const state = { csrf:'', templates:[], vms:[], jobs:[], capabilities:null, testVmId:null, viewingVm:null, activePage:'overview', busy:false, watched:new Set(), defaultTemplate:null, guests:[], packages:[], portableProfiles:[], updateTasks:[], reinstalls:[], reinstallVm:null, packageSelections:{}, packageDirectories:{}, jobsPage:1, updatePage:1, jobsPaged:{items:[],page:1,pages:1,total:0}, updatesPaged:{items:[],page:1,pages:1,total:0} };
+const state = { csrf:'', templates:[], vms:[], jobs:[], capabilities:null, viewingVm:null, activePage:'overview', busy:false, watched:new Set(), defaultTemplate:null, guests:[], packages:[], portableProfiles:[], updateTasks:[], reinstalls:[], reinstallVm:null, packageSelections:{}, packageDirectories:{}, jobsPage:1, updatePage:1, jobsPaged:{items:[],page:1,pages:1,total:0}, updatesPaged:{items:[],page:1,pages:1,total:0} };
 const pages = { overview:'管理概览', vms:'虚拟机管理', templates:'黄金模板', updates:'软件更新', jobs:'任务记录', remote:'远程运维', clients:'思博客户服务', system:'系统更新', cleanup:'空间清理' };
 const statusName = { READY:'就绪', CREATING:'克隆中', ERROR:'异常', DELETING:'删除中', REINSTALLING:'重装中', REINSTALL_ERROR:'重装异常', DELETE_ERROR:'删除失败', SEALED_ATTESTED:'已封存', CANDIDATE:'待确认', ARCHIVED:'已归档', FILES_PURGING:'磁盘清理异常', FILES_DELETED:'文件已清理（保留历史）', POWERED_ON:'运行中', POWERED_OFF:'已关机', SUSPENDED:'挂起', UNKNOWN:'未知', QUEUED:'排队中', RUNNING:'执行中', SUCCEEDED:'成功', VERIFY_REQUIRED:'已执行，待版本核验', FAILED:'失败' };
 function el(tag, cls='', text='') { const v=document.createElement(tag); if(cls)v.className=cls; if(text!==undefined && text!==null)v.textContent=String(text); return v; }
@@ -193,10 +193,6 @@ function vmCard(vm){let card=el('div','vm-card'),head=el('div','vm-title'),name=
   actions.append(btn('强制关机','danger',()=>hardStop(vm),vm.power_state!=='POWERED_ON'));
   actions.append(btn('状态诊断','ghost',()=>openDiagnostics(vm)));
   actions.append(btn('初始化信息','ghost',()=>openProvision(vm)));
-  actions.append(btn('首次启动监控','ghost',()=>firstboot(vm),vm.power_state!=='POWERED_OFF'));
-  actions.append(btn('启用截图','ghost',()=>enableScreen(vm),vm.power_state!=='POWERED_OFF'));
-  actions.append(btn('查看屏幕','ghost',()=>openScreen(vm),vm.power_state!=='POWERED_ON'));
-  actions.append(btn('一键验收','ghost',()=>openTest(vm),vm.power_state!=='POWERED_OFF'));
   actions.append(btn('重装系统','warn',()=>openReinstall(vm),vm.power_state!=='POWERED_OFF'));
   actions.append(btn('软件更新','ghost',()=>{navigate('updates');},false));
  }
@@ -252,31 +248,6 @@ async function deleteVm(vm){
   if($('vmDialog').open)$('vmDialog').close();navigate('jobs');
  }catch(e){toast('删除失败：'+e.message,true);}
 }
-async function firstboot(vm){
-  if(!confirm(`自动启动「${vm.name}」并监控 VMware Tools 最多 5 分钟？\n该操作不会自动填写 Windows OOBE 页面，也不会强制重启。建议先启用截图。`))return;
-  try{await submitJob(`/api/vms/${encodeURIComponent(vm.id)}/firstboot-start`,'POST');navigate('jobs');}catch(e){toast(e.message,true);}
-}
-async function enableScreen(vm){
-  if(!confirm(`为关机的「${vm.name}」启用本机 127.0.0.1 VNC 截图？\n这是一次性设置，首次启用后需开机才能拍摄。\nVNC 的密码协议较旧，不允许将端口暴露到局域网或公网。`))return;
-  try{const d=await request(`/api/vms/${encodeURIComponent(vm.id)}/enable-screen`,'POST');toast(`本机截图通道已启用（127.0.0.1:${d.port}）${d.warning?'；注意：有残留锁标记，详情可在状态诊断中查看':''}，现在可以开机`);}catch(e){toast(e.message,true);}
-}
-let screenUrl=null;
-async function openScreen(vm){
-  $('screenTitle').textContent=`${vm.name} · 实时单帧截图`;
-  $('screenStatus').textContent='正在从本机 VNC 读取屏幕...';
-  $('screenImage').hidden=true;
-  if(!$('screenDialog').open)$('screenDialog').showModal();
-  $('screenRefresh').onclick=()=>openScreen(vm);
-  try{
-    const res=await fetch(`/api/vms/${encodeURIComponent(vm.id)}/screen.png?t=${Date.now()}`,{credentials:'same-origin',cache:'no-store'});
-    if(!res.ok){let j;try{j=await res.json();}catch{}throw Error(j?.detail||`HTTP ${res.status}`);}
-    if(screenUrl)URL.revokeObjectURL(screenUrl);
-    screenUrl=URL.createObjectURL(await res.blob());
-    $('screenImage').src=screenUrl;$('screenImage').hidden=false;
-    $('screenStatus').textContent='单帧截图已获取。可点击「刷新画面」重新抓取；截图不写入宿主机磁盘。';
-    $('screenRefresh').onclick=()=>openScreen(vm);
-  }catch(e){$('screenStatus').textContent='截图失败：'+e.message+'。虚拟机已经开机但还未开启本机 VNC 时，需要先关机、启用截图，再重新启动。';}
-}
 async function openDiagnostics(vm) {
   const body=$('dialogBody');body.replaceChildren();
   $('dialogTitle').textContent=`${vm.name} · 状态诊断`;
@@ -298,7 +269,6 @@ async function openDiagnostics(vm) {
     if(d.warning)body.append(el('p','warning',d.warning));
     const row=el('div','snap-toolbar');
     row.append(btn('重新诊断','ghost',()=>openDiagnostics(vm)));
-    if(d.offline_vmx_edit_possible)row.append(btn('启用截图','primary',()=>enableScreen(vm)));
     body.append(row);
   } catch(e) {body.replaceChildren(el('p','warning','诊断失败：'+e.message));}
 }
@@ -337,15 +307,6 @@ async function openProvision(vm) {
     }
   }catch(e){body.replaceChildren(el('p','warning','读取失败：'+e.message));}
 }
-async function firstbootState(vm){
-  try{
-    const r=await request(`/api/vms/${encodeURIComponent(vm.id)}/firstboot-state`);
-    const evidence=r.oobe_evidence?.report || {};
-    const done=r.oobe_complete===true;
-    const msg=`电源：${r.power_state} | VMware Tools：${r.tools_state} | IP：${r.guest_ip||'未知'} | OOBE：${done?'Guest Agent 已验证':'尚未验证'}${evidence.stage?'（'+evidence.stage+'）':''}。首次启动需要先有有效的 Guest Agent 注册及 SetupComplete 标记。`;
-    toast(msg);
-  }catch(e){toast(e.message,true);}
-}
 async function repair(vm){if(!confirm(`仅当 ${vm.name} 因重复 VMware UUID/MAC 导致完整克隆失败，才可以修复；并确认其已关机。继续？`))return;
  try{await submitJob(`/api/vms/${encodeURIComponent(vm.id)}/repair-clone-identity`);}catch(e){toast(e.message,true);}}
 function detailLine(grid,k,v){grid.append(el('div','',k),el('div','',v||'—'));}
@@ -380,11 +341,8 @@ async function openDetail(id) {
   const busy=state.jobs.some(j=>j.vm_id===id && ['QUEUED','RUNNING'].includes(j.status));
   if(vm.state==='READY'){
     const ops=el('div','snap-toolbar');
-    ops.append(btn('首次启动状态','ghost small',()=>firstbootState(vm)));
     ops.append(btn('状态诊断','ghost small',()=>openDiagnostics(vm)));
     ops.append(btn('初始化信息','ghost small',()=>openProvision(vm)));
-    ops.append(btn('查看屏幕截图','ghost small',()=>openScreen(vm),vm.power_state!=='POWERED_ON'));
-    if(vm.power_state==='POWERED_OFF')ops.append(btn('启用本机截图','ghost small',()=>enableScreen(vm)));
     if(vm.power_state==='POWERED_ON')ops.append(btn('强制关机','danger small',()=>hardStop(vm)));
     if(vm.power_state==='POWERED_OFF')ops.append(btn('删除虚拟机','danger small',()=>deleteVm(vm),busy));
     body.append(ops);
@@ -438,7 +396,6 @@ async function openDetail(id) {
   body.append(section);
   if(!$('vmDialog').open)$('vmDialog').showModal();
 }
-function openTest(vm){state.testVmId=vm.id;$('testVmName').textContent=`目标：${vm.name} · ${vm.id}`;$('testConfirmed').checked=false;$('testPower').checked=true;$('testRestore').checked=false;$('testRestoreConfirm').checked=false;$('restoreConfirmRow').hidden=true;$('testDialog').showModal();}
 function openReinstall(vm){
   if(vm.state!=='READY'||vm.power_state!=='POWERED_OFF'){toast('请先完全关机并确认没有任务',true);return;}
   state.reinstallVm=vm;
@@ -651,13 +608,6 @@ window.addEventListener('DOMContentLoaded',async()=>{
      $('reinstallDialog').close();navigate('jobs');
    }catch(err){toast('重装提交失败：'+err.message,true);}
  });
- $('pluginCommandForm').addEventListener('submit',async e=>{
-   e.preventDefault();const vm=$('pluginVm').value,version=$('pluginVersion').value.trim(),command=$('pluginCommand').value.trim();
-   if(!vm)return toast('请先选择在线虚拟机',true);
-   if(!confirm(`对所选 VM 下发 DSH 插件更新命令？\n\n${command}\n\n目标版本：${version}\n将在已登录 Windows 用户会话执行；请确认命令及目标 Profile 正确。`))return;
-   try{const x=await request(`/api/vms/${encodeURIComponent(vm)}/plugin-command-update`,'POST',{version,command,confirm:true});toast('插件更新任务已提交：'+x.task_id);await refresh();}
-   catch(err){toast('插件命令未下发：'+err.message,true);}
- });
  $('portableUploadForm').addEventListener('submit',async ev=>{
    ev.preventDefault();
    const file=$('portableZip').files[0],name=$('portableName').value.trim(),
@@ -713,22 +663,7 @@ window.addEventListener('DOMContentLoaded',async()=>{
    }catch(error){toast('软件包校验或登记失败：'+error.message,true);}
    finally{button.disabled=false;button.textContent='上传并登记软件更新';}
  });
- $('uploadForm').addEventListener('submit',async e=>{
-   e.preventDefault();const f=$('packageFile').files[0],product=$('packageProduct').value,version=$('packageVersion').value.trim();
-   if(!f||!f.name.toLowerCase().endsWith('.zip'))return toast('只能上传 ZIP',true);
-   if(f.size>512*1024*1024)return toast('最大 512 MB',true);
-   if(!confirm(`确认这是来自可信来源、已检查且与客户软件兼容的 ${product} ${version} 发布包？`))return;
-   try{const res=await fetch(`/api/fleet/packages/${encodeURIComponent(product)}/${encodeURIComponent(version)}`,{
-     method:'POST',credentials:'same-origin',headers:{'X-UI-CSRF':state.csrf,'Content-Type':'application/zip'},body:f});
-     const data=await res.json();if(!res.ok)throw Error(data.detail||'上传失败');
-     $('uploadForm').reset();toast('版本包上传成功：'+data.sha256);await refresh();
-   }catch(err){toast(err.message,true);}
- });
- $('dialogClose').addEventListener('click',()=>$('vmDialog').close());$('screenClose').addEventListener('click',()=>$('screenDialog').close());$('testClose').addEventListener('click',()=>$('testDialog').close());$('testCancel').addEventListener('click',()=>$('testDialog').close());
- $('testRestore').addEventListener('change',()=>{$('restoreConfirmRow').hidden=!$('testRestore').checked;});
- $('testForm').addEventListener('submit',async ev=>{ev.preventDefault();const id=state.testVmId;const restore=$('testRestore').checked;if(restore&&!$('testRestoreConfirm').checked){toast('恢复快照需要勾选数据风险确认',true);return;}
-  try{await submitJob(`/api/vms/${encodeURIComponent(id)}/acceptance-test`,'POST',{confirm_test_vm:$('testConfirmed').checked,test_power:$('testPower').checked,include_restore:restore,confirm_data_loss:restore&&$('testRestoreConfirm').checked});$('testDialog').close();navigate('jobs');}catch(e){toast(e.message,true);}
- });
+ $('dialogClose').addEventListener('click',()=>$('vmDialog').close());
  $('cloneForm').addEventListener('submit',async ev=>{ev.preventDefault();const name=$('cloneName').value.trim(),template_id=$('cloneTemplate').value,customer_ref=$('cloneCustomer').value.trim()||null;
   const autoStart=$('cloneAutoStart').checked,screen=$('cloneEnableScreen').checked,unattended=$('cloneUnattended').checked;
   if(unattended && !(state.templates.find(t=>t.id===template_id)?.oobe_bootstrap_version>=2))return toast('所选模板未安装 V1.2 Administrator OOBE 引导，请选择新版封存模板或取消无人值守',true);
