@@ -322,9 +322,19 @@ class FleetStore:
                       "WHERE vm_id=? AND status='RUNNING' AND progress_at<?",
                       ('Update outcome unknown after lost heartbeat; review Guest update-journals before any retry',now(),vm_id,progress_cutoff))
             task = d.execute("SELECT * FROM guest_tasks WHERE vm_id=? AND status='QUEUED' ORDER BY created_at LIMIT 1",(vm_id,)).fetchone()
-            if not task: return None
+            # Old adapters were retired: fail only tasks that have NEVER been
+            # claimed, rather than accidentally executing historical scripts.
+            # Previously CLAIMED/RUNNING tasks retain their audit outcomes.
+            while task:
+                pkg=d.execute('SELECT * FROM update_packages WHERE id=?',(task['package_id'],)).fetchone()
+                if (pkg and task['kind']=='UPDATE' and
+                    re.fullmatch(r'portable-p-[0-9a-f]{20}',pkg['product'])):
+                    break
+                d.execute("UPDATE guest_tasks SET status='FAILED',message=?,completed_at=? WHERE id=? AND status='QUEUED'",
+                          ('旧版更新方式已停用，任务未执行；请上传新 ZIP 更新包',now(),task['id']))
+                task=d.execute("SELECT * FROM guest_tasks WHERE vm_id=? AND status='QUEUED' ORDER BY created_at LIMIT 1",(vm_id,)).fetchone()
+            if not task:return None
             d.execute("UPDATE guest_tasks SET status='CLAIMED', claimed_at=? WHERE id=? AND status='QUEUED'",(now(),task['id']))
-            pkg = d.execute('SELECT * FROM update_packages WHERE id=?',(task['package_id'],)).fetchone()
             return {'id':task['id'], 'product':pkg['product'], 'version':pkg['version'],
                     'package_id':pkg['id'], 'sha256':pkg['sha256'], 'size':pkg['bytes'],
                     'kind':task['kind'],'reference_id':task['reference_id'],
