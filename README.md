@@ -107,3 +107,23 @@ are never targeted.
 A release must include the cleanup API routes, the admin navigation, the separate
 old-VM backup selection, and the cleanup manager. CI checks their presence to
 prevent a clean build with an unwired feature.
+
+
+## v1.4.54 — C:\dsh 便携软件自动更新
+
+每台已注册的 Windows Guest Agent v2.0.25+ 自动只读扫描 C:\dsh 下最多 32 个一级程序目录，并向管理员界面上报发现的程序、候选启动文件、版本及版本证据来源。不运行任何发现的软件。扫描到的目录本身不是升级授权：只能由管理员审核并上传完整的 ZIP 发布包。
+
+在「软件更新」上传审核过的 ZIP：只需填写软件名称和启动文件名；ZIP 只能包含一个顶层程序目录。例如，MyApp.zip 内为 MyApp/MyApp.exe、MyApp/VERSION、MyApp/assets/...，客户端目标目录即 C:\dsh\MyApp。启动文件只能是该目录中的 EXE、BAT 或 CMD（可以是相对路径，不能带命令参数）。程序目录和启动文件一经登记，不允许新上传包在无提示情况下更换启动文件。
+
+版本识别：优先从上传包的 VERSION、version.txt、package.json、app.json、manifest.json 或可选自定义版本文件读取；管理员可手动覆盖版本。若无可识别版本，Host 以 build-加 SHA-256 前 12 位作为唯一包指纹，明确不将指纹冒充软件语义版本。Guest 升级后还能读取安装文件的 EXE ProductVersion/FileVersion。两种版本来源分别记录，避免从错误的 EXE 判断安装包版本。
+
+持久化记录：
+- portable_profiles：软件名称、ZIP 顶层目录名、对应 C:\dsh 目录、启动文件、可选版本文件和识别规则。
+- portable_package_meta：每次上传对应的软件档案与版本识别来源。
+- update_packages：审核发布包、软件版本、SHA-256 校验值、大小和上传时间；不从未批准的远程 URL 执行下载。
+- guest_tasks：每台客户机的更新任务、状态、更新阶段及最终处理结果；Guest 心跳单独保留真实已安装版本和来源。
+
+安装流程：先经独立 HTTPS 认证通道下载并校验 ZIP → 验证单目录和启动文件 → 解压暂存 → 继承已有用户数据/配置等需要保留的目录 → 检查当前程序是否运行 → 若原先运行，先安全识别和停止其自身进程 → 原目录改名为带任务号的备份 → 新目录切换 → 按相同版本来源核对 → **原来运行则以原 Windows 登录用户会话启动并验证；原来关闭则保持关闭**。失败时尽可能恢复原文件夹、运行状态，保留诊断目录；未知结果不自动重复执行。更新前备份的旧版本默认不会立即自动删除。
+
+可单机下发、批量更新全部匹配的在线客户机，或在上传时勾选并确认“上传后自动下发”。旧版安装器适配器保留在高级兼容区。该方案仅针对可整体替换的便携目录，不替代 MSI、驱动、Windows 服务或依赖特定静默安装参数的软件。Guest 需先升级到 v2.0.25；Windows 安全软件的进程控制规则需在真实宿主机验证。
+

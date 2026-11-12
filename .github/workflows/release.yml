@@ -34,6 +34,20 @@ jobs:
           } finally {
             Remove-Item -LiteralPath $updater -Force -ErrorAction SilentlyContinue
           }
+      - name: Verify Windows portable process scanner is inspect-only by default
+        shell: pwsh
+        run: |
+          $folder = 'C:\dsh\VMO-Test-App'
+          New-Item -ItemType Directory -Path $folder -Force | Out-Null
+          $binary = Join-Path $folder 'Test.exe'
+          Set-Content -LiteralPath $binary -Value 'not executable; inspection only' -Encoding ASCII
+          $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $script = (Resolve-Path 'guest_agent/Portable-Processes.ps1').Path
+          $result = & $ps51 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $script -Mode Inspect -ProgramRoot $folder -Launcher 'Test.exe'
+          if ($LASTEXITCODE -ne 0) { throw 'Portable process inspect failed on Windows PowerShell 5.1' }
+          $obj = $result | ConvertFrom-Json
+          if ($obj.running -ne $false -or $obj.count -ne 0) { throw 'Inspection misidentified a process' }
+          Remove-Item -LiteralPath $folder -Recurse -Force
   release:
     needs: windows-preflight
     runs-on: ubuntu-latest
@@ -53,6 +67,8 @@ jobs:
         run: python -m unittest discover -s tests -p test_update_launch.py -v
       - name: Check admin JavaScript syntax
         run: node --check app/ui/admin.js
+      - name: Regression - portable ZIP, versions and prior-running-state recovery
+        run: python -m unittest discover -s tests -p test_portable_catalog.py -v
       - name: Regression test version consistency
         shell: bash
         run: |
@@ -93,7 +109,8 @@ jobs:
         run: |
           foreach ($file in @('scripts/host/Apply-GitHubUpdate.ps1',
                               'scripts/host/Test-GitHubUpdate.ps1',
-                              'scripts/host/Control-VMOHost.ps1')) {
+                              'scripts/host/Control-VMOHost.ps1',
+                              'guest_agent/Portable-Processes.ps1')) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(

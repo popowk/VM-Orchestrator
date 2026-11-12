@@ -204,6 +204,8 @@ def perform_update(task: dict, config: dict, root: Path, ctx, on_phase=None):
         return result
     if opts.get('mode')=='snowluma_direct' and prod=='snowluma':
         mode='snowluma_direct'
+    if prod.startswith('portable-p-') and opts.get('mode')=='portable_catalog':
+        mode='portable_catalog'
     if mode=='disabled': raise RuntimeError(f'{prod}: installation adapter has not been configured on this guest')
     version=task['version']
     if not version or not all(ch.isalnum() or ch in '.-_+' for ch in version):
@@ -217,7 +219,12 @@ def perform_update(task: dict, config: dict, root: Path, ctx, on_phase=None):
     archive=root / ('download-'+task['id']+'.zip')
     archive.write_bytes(content)
     try:
-        if mode=='snowluma_direct':
+        if mode=='portable_catalog':
+            try: from .portable_software import update_portable
+            except ImportError: from portable_software import update_portable
+            result=update_portable(opts,archive,task['id'],version,root,
+                                   extractor=safe_extract_zip,on_phase=on_phase)
+        elif mode=='snowluma_direct':
             try:from .quick_updates import direct_snowluma_update
             except ImportError:from quick_updates import direct_snowluma_update
             result=direct_snowluma_update(opts,archive,task['id'],version,root,extractor=safe_extract_zip,on_phase=on_phase)
@@ -245,7 +252,7 @@ def perform_update(task: dict, config: dict, root: Path, ctx, on_phase=None):
     if on_phase:on_phase('verified')
     # An HTTP listener or command exit is not proof of the newly running version.
     # Only persist a confirmed version for the simplified SnowLuma workflow.
-    if not (isinstance(result,dict) and result.get('runtime_version_api')=='not_verified'):
+    if mode!='portable_catalog' and not (isinstance(result,dict) and result.get('runtime_version_api')=='not_verified'):
         config.setdefault('installed_versions',{})[prod]=version
     return result
 
@@ -384,6 +391,19 @@ def detected_installations(config: dict) -> dict:
     return findings
 
 
+
+def _safe_portable_inventory():
+    if os.name!='nt':
+        return {}
+    try:
+        from .portable_software import scan_c_dsh
+    except ImportError:
+        from portable_software import scan_c_dsh
+    try:
+        return scan_c_dsh()
+    except (OSError, ValueError, RuntimeError):
+        return {}
+
 def snapshot_versions(config: dict):
     versions=dict(config.get('installed_versions',{}))
     for product,cfg in config.get('installations',{}).items():
@@ -397,6 +417,7 @@ def snapshot_versions(config: dict):
             'guest_agent':json.loads((Path(__file__).with_name('agent-release.json')).read_text(encoding='utf-8'))['version'],'oobe':oobe_evidence(config),
             'install_modes':{k:v.get('mode','disabled') for k,v in config.get('installations',{}).items()},
             'detected_software':detected_installations(config),
+            'portable_software':_safe_portable_inventory(),
             **guest_ipv4_addresses(config.get('server_url',''))}
 
 

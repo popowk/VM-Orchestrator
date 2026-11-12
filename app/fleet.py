@@ -147,7 +147,7 @@ class FleetStore:
             d.execute("UPDATE guest_tasks SET status='CANCELLED',message='Guest identity revoked',completed_at=? WHERE vm_id=? AND status IN ('QUEUED','CLAIMED','RUNNING')", (now(),vm_id))
 
     def heartbeat(self, vm_id: str, report: dict):
-        if not isinstance(report,dict) or len(json.dumps(report)) > 4096:
+        if not isinstance(report,dict) or len(json.dumps(report)) > 16384:
             raise FleetError('Report too large or invalid')
         smbios=report.get('smbios_uuid')
         if smbios is not None:
@@ -177,7 +177,7 @@ class FleetStore:
                 'SELECT vm_id,agent_id,registered_at,last_seen,reported_json,revoked_at FROM guest_enrollment ORDER BY registered_at DESC')]
 
     def add_package(self, product: str, version: str, sha256: str, size: int, name: str, package_id: str | None = None):
-        if product not in VALID_PRODUCTS or not VERSION.fullmatch(version):
+        if not (product in VALID_PRODUCTS or re.fullmatch(r'portable-p-[0-9a-f]{20}', product)) or not VERSION.fullmatch(version):
             raise FleetError('Unsupported product or unsafe version')
         package_id = package_id or str(uuid.uuid4())
         with self.db() as d:
@@ -258,12 +258,46 @@ class FleetStore:
                 modes = report.get('install_modes', {}) if isinstance(report, dict) else {}
             except (ValueError, TypeError):
                 modes = {}
-            allowed_modes = {'snowluma': {'portable_managed', 'portable'}, 'dsh': {'desktop_installer', 'npm_global'}, 'fish-soul': {'dsh_plugin_user', 'dsh_plugin'}}
-            # A host-admin requested direct SnowLuma upgrade is restricted by the
-            # Guest to a verified C:\\dsh\\ installation path. No local adapter wizard.
-            direct = pack['product']=='snowluma' and (options or {}).get('mode')=='snowluma_direct'
-            if not direct and (not isinstance(modes, dict) or modes.get(pack['product'], 'disabled') not in allowed_modes[pack['product']]):
-                raise FleetError(f"{pack['product']}: 客户机未配置安装适配器；请先在 Guest 上配置软件路径并等待一次心跳")
+            allowed_modes = {'snowluma': {'portable_managed', 'portable'},
+                             'dsh': {'desktop_installer', 'npm_global'},
+                             'fish-soul': {'dsh_plugin_user', 'dsh_plugin'}}
+            portable = pack and re.fullmatch(r'portable-(p-[0-9a-f]{20})', pack['product'])
+            if portable:
+                profile = d.execute(
+                    '''SELECT p.id,p.folder,p.launcher,
+                        COALESCE(m.version_file,p.version_file) AS version_file,
+                        COALESCE(m.version_source,p.version_source) AS version_source
+                       FROM portable_profiles AS p
+                       JOIN portable_package_meta AS m ON m.profile_id=p.id
+                       WHERE p.id=? AND m.package_id=?''',
+                    (portable.group(1), package_id)).fetchone()
+                if not profile:
+                    raise FleetError('此更新包没有对应的软件目录配置，请重新上传')
+                # The browser cannot provide a different path or executable.
+                options = {'mode': 'portable_catalog',
+                           'portable': dict(profile)}
+                agent_version = report.get('guest_agent','') if isinstance(report,dict) else ''
+                try:
+                    numbers = tuple(int(v) for v in agent_version.split('.'))
+                except (ValueError,TypeError,AttributeError):
+                    numbers = ()
+                if len(numbers) != 3 or numbers < (2,0,25):
+                    raise FleetError('该客户机需要 Guest Agent v2.0.25 或更高版本才能统一更新')
+                installed = report.get('portable_software', {}) if isinstance(report, dict) else {}
+                if not isinstance(installed, dict) or not any(
+                        name.casefold()==profile['folder'].casefold() for name in installed):
+                    raise FleetError('客户机最近心跳未发现 C:\\dsh\\'+profile['folder']+'；请检查文件夹、Guest 版本及心跳')
+                if options['portable'].get('launcher') and not any(
+                        name.casefold()==profile['folder'].casefold() and
+                        isinstance(item,dict) for name,item in installed.items()):
+                    raise FleetError('客户机程序识别数据不完整')
+            else:
+                # Legacy signed installer adapters remain separate and do not
+                # become arbitrary process-execution via portable packages.
+                direct = pack['product']=='snowluma' and (options or {}).get('mode')=='snowluma_direct'
+                if not direct and (not isinstance(modes, dict) or
+                                   modes.get(pack['product'], 'disabled') not in allowed_modes.get(pack['product'],set())):
+                    raise FleetError(f"{pack['product']}: 客户机尚未配置安装适配器")
             if not agent['last_seen'] or (datetime.now(timezone.utc)-datetime.fromisoformat(agent['last_seen'])).total_seconds() > 600:
                 raise FleetError('Guest Agent 心跳已超出 10 分钟；请先恢复自动心跳')
             id_ = str(uuid.uuid4())

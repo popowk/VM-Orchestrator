@@ -10,7 +10,7 @@ $program = 'C:\Program Files\VM-Orchestrator\GuestAgent'
 $state = Join-Path $program 'state'
 $config = Join-Path $state 'agent.json'
 $serviceName = 'VMO-GuestAgentV2'
-$files = @('agent-release.json','runtime_core.py','agent_v2.py','interactive_session.py','upload_directory.py','app_tunnel.py','ws_client.py','app_registry.py','local_app_report.py','update_lifecycle.py','dsh_updates.py','quick_updates.py','quick_plugin_update.py','update_commands.py','user_update_exec.py','Configure-ManagedUpdates.ps1','windows_service.py','machine_identity.py','Probe-Gateway.py','Report-App-Startup.ps1','Report-App.cmd','Report-App-JSON.py','Set-RemotePermissions.ps1','Enable-RemoteCommands.cmd','Disable-RemoteCommands.cmd')
+$files = @('agent-release.json','runtime_core.py','agent_v2.py','interactive_session.py','upload_directory.py','app_tunnel.py','ws_client.py','app_registry.py','local_app_report.py','update_lifecycle.py','dsh_updates.py','quick_updates.py','portable_software.py','Portable-Processes.ps1','quick_plugin_update.py','update_commands.py','user_update_exec.py','Configure-ManagedUpdates.ps1','windows_service.py','machine_identity.py','Probe-Gateway.py','Report-App-Startup.ps1','Report-App.cmd','Report-App-JSON.py','Set-RemotePermissions.ps1','Enable-RemoteCommands.cmd','Disable-RemoteCommands.cmd')
 
 function Assert-ExitCode([string]$Operation) {
     if ($LASTEXITCODE -ne 0) { throw "$Operation failed (exit $LASTEXITCODE)" }
