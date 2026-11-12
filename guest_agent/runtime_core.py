@@ -211,28 +211,6 @@ def guest_ipv4_addresses(gateway_url: str = '') -> dict:
             'ip_source': 'guest_report'}
 
 
-def detected_installations(config: dict) -> dict:
-    """Read-only discovery. Folder names are NOT authoritative installed versions."""
-    findings = {}
-    base = Path('C:/dsh')
-    if os.name == 'nt' and base.is_dir():
-        try:
-            candidates = list(base.glob('SnowLuma*'))[:24]
-            for candidate in candidates:
-                if not candidate.is_dir() or not (candidate/'launcher.bat').is_file():
-                    continue
-                match = re.search(r'(?i)^SnowLuma[-_]?v?(\d+(?:\.\d+){1,3})', candidate.name)
-                findings['snowluma'] = {'installed': True, 'version_hint': match.group(1) if match else '',
-                                         'source': 'directory_name', 'version_verified': False}
-                break
-        except OSError:
-            pass
-        if (base/'DeepSeek Harness'/'DeepSeek Harness.exe').is_file():
-            findings['dsh']={'installed':True,'version_hint':'', 'source':'executable_found', 'version_verified':False}
-    return findings
-
-
-
 def _safe_portable_inventory():
     if os.name!='nt':
         return {}
@@ -246,18 +224,14 @@ def _safe_portable_inventory():
         return {}
 
 def snapshot_versions(config: dict):
-    versions=dict(config.get('installed_versions',{}))
-    for product,cfg in config.get('installations',{}).items():
-        root=cfg.get('program_dir')
-        file=cfg.get('version_file')
-        if root and file:
-            p=Path(root)/file
-            try: versions[product]=p.read_text(encoding='utf-8').strip()[:80]
-            except OSError: pass
-    return {'versions':versions,'hostname':os.environ.get('COMPUTERNAME') or os.environ.get('HOSTNAME','unknown'),
-            'guest_agent':json.loads((Path(__file__).with_name('agent-release.json')).read_text(encoding='utf-8'))['version'],'oobe':oobe_evidence(config),
-            'install_modes':{k:v.get('mode','disabled') for k,v in config.get('installations',{}).items()},
-            'detected_software':detected_installations(config),
+    """Guest identity, real C:\dsh application versions and first-boot evidence.
+
+    Old install-mode adapters are removed; no historical requested version is
+    treated as a verified installed portable program version.
+    """
+    return {'hostname':os.environ.get('COMPUTERNAME') or os.environ.get('HOSTNAME','unknown'),
+            'guest_agent':json.loads((Path(__file__).with_name('agent-release.json')).read_text(encoding='utf-8'))['version'],
+            'oobe':oobe_evidence(config),
             'portable_software':_safe_portable_inventory(),
             **guest_ipv4_addresses(config.get('server_url',''))}
 
@@ -280,7 +254,6 @@ def bootstrap_from_iso(config_path: Path):
             ca_target=config_path.parent / 'host-only-ca.pem'
             ca_target.write_bytes(ca.read_bytes())
             data['ca_bundle']=str(ca_target)
-            data['installations']={'dsh':{'mode':'disabled'},'fish-soul':{'mode':'disabled'},'snowluma':{'mode':'disabled'}}
             atomic_json(config_path,data)
             return
         except (OSError,ValueError):
