@@ -179,10 +179,12 @@ class PortableCatalog:
 
     def upsert(self, profile: dict) -> dict:
         with self._db() as d:
-            existing = d.execute('SELECT id,launcher FROM portable_profiles WHERE folder=? COLLATE NOCASE',
+            existing = d.execute('SELECT id,folder,launcher FROM portable_profiles WHERE folder=? COLLATE NOCASE',
                                  (profile['folder'],)).fetchone()
             if existing and existing['id'] != profile['id']:
                 raise PortableCatalogError('该目录已登记为不同软件，请先核对目录')
+            if existing and existing['folder'] != profile['folder']:
+                raise PortableCatalogError('同一软件 ZIP 顶层目录名的大小写必须与已登记目录一致')
             # Never silently switch a registered launch path: explicit review.
             if existing and existing['launcher'].casefold() != profile['launcher'].casefold():
                 raise PortableCatalogError('该软件已登记其他启动文件。为避免误启动，请使用原启动文件或另行修改软件配置')
