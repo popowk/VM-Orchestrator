@@ -140,7 +140,7 @@ def installed_version(directory: Path, launcher: str = '', version_file: str = '
             'source':'folder_hint' if match else 'unavailable','verified':False}
 
 
-def scan_c_dsh(max_entries: int = 12, base: Path = Path('C:/dsh')) -> dict:
+def scan_c_dsh(max_entries: int = 32, base: Path = Path('C:/dsh')) -> dict:
     """Bounded, read-only inventory returned in the authenticated Guest heartbeat."""
     findings={}
     if not base.is_dir() or base.is_symlink():
