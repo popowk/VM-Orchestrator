@@ -1086,7 +1086,7 @@ window.VMOSelfService=(()=>{
 
  const states={connected:'WSS 已连接',disconnected:'WSS 已断开',heartbeat_timeout:'心跳超时',never_connected:'尚未连接'};
  let vm='',csrf='',seq=0,page=1,connection=false,opsFingerprint='',appsFingerprint='';
- let installedAgentVersion='', previewOn=false, previewBusy=false, previewTimer=null;
+ let selfFingerprint='',selfSubmitting='',installedAgentVersion='', previewOn=false, previewBusy=false, previewTimer=null;
  let previewController=null, previewUrl=null, previewGeneration=0;
  const commandLimit=()=>by('remoteShell').value==='powershell'?12000:8000;
  function versionAtLeast(actual,required){
@@ -1208,18 +1208,85 @@ window.VMOSelfService=(()=>{
      row.append(info,b);target.append(row);
    }
  }
- function renderOps(paged){
-   page=paged.page;by('remotePageLabel').textContent=`第 ${page} / ${paged.pages} 页 · ${paged.total} 条`;
+ function generateRequestId(){
+   const bytes=new Uint8Array(16);
+   if(!window.crypto?.getRandomValues)throw Error('需要受支持的浏览器随机数接口以安全提交自助操作');
+   window.crypto.getRandomValues(bytes);
+   bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+   const hex=[...bytes].map(x=>x.toString(16).padStart(2,'0')).join('');
+   return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+ }
+ function renderSelfActions(info){
+   const rows=info?.items||[];
+   const key=JSON.stringify([vm,connection,selfSubmitting,info?.message,rows.map(a=>[a.id,a.label,a.description,a.kind,a.updated_at])]);
+   if(key===selfFingerprint)return;
+   selfFingerprint=key;
+   const status=by('remoteSelfActionsStatus'),target=by('remoteSelfActions');
+   status.textContent=info?.message||'该虚拟机没有可用的客户自助操作';
+   target.replaceChildren();
+   for(const item of rows){
+     const row=txt('div','','remote-app-row'),description=txt('div','');
+     description.append(txt('strong',item.label));
+     if(item.description)description.append(txt('small',item.description));
+     description.append(txt('small',item.kind==='SOFTWARE_UPDATE'?'已审核的软件更新包':'管理员预设命令；命令内容不会暴露给客户'));
+     const button=txt('button','执行操作','btn ghost small');button.type='button';
+     button.disabled=!connection||Boolean(selfSubmitting);
+     button.onclick=async()=>{
+       if(!connection)return alert('Guest WSS 未连接，无法执行');
+       if(selfSubmitting)return;
+       if(!confirm('确认对当前客户虚拟机执行「'+item.label+'」？\n\n将复用客户自助操作配置、去重和审计机制；执行结果统一显示在最近执行记录里。'))return;
+       const requestVm=vm;
+       selfSubmitting=item.id;selfFingerprint='';button.disabled=true;
+       status.textContent='正在下发「'+item.label+'」…';
+       try{
+         const result=await api('/api/vms/'+encodeURIComponent(requestVm)+
+           '/remote/self-actions/'+encodeURIComponent(item.id)+'/execute','POST',
+           {request_id:generateRequestId(),confirm:true});
+         status.textContent='操作已提交：'+result.request_id+' · 结果将在「最近执行记录」更新';
+       }catch(err){status.textContent='操作未下发：'+err.message;alert(status.textContent);}
+       finally{selfSubmitting='';selfFingerprint='';await refresh();}
+     };
+     row.append(description,button);target.append(row);
+   }
+ }
+ function renderOps(paged, self){
+   page=paged.page;
+   const history=self?.executions||[];
+   const commands=new Map(history.filter(x=>x.action_kind==='COMMAND'&&x.operation_id).map(x=>[x.operation_id,x]));
+   const updates=page===1?history.filter(x=>x.action_kind==='SOFTWARE_UPDATE'):[];
+   by('remotePageLabel').textContent='命令第 '+page+' / '+paged.pages+' 页 · '+paged.total+
+      ' 条'+(updates.length?' · 自助更新最近 '+updates.length+' 条':'');
    by('remotePrev').disabled=page<=1;by('remoteNext').disabled=page>=paged.pages;
    const ops=paged.items||[];
-   const fingerprint=JSON.stringify(ops.map(o=>[o.id,o.state,o.attempt_count,o.completed_at,o.last_error,o.result]));
+   const fingerprint=JSON.stringify([ops.map(o=>[o.id,o.state,o.attempt_count,o.completed_at,o.last_error,o.result]),
+     updates.map(x=>[x.request_id,x.status,x.updated_at,x.output_text]),history.map(x=>[x.operation_id,x.label])]);
    if(fingerprint===opsFingerprint)return;opsFingerprint=fingerprint;
    const target=by('remoteOps');const opened=new Set([...target.querySelectorAll('details[open]')].map(x=>x.dataset.id));
    target.replaceChildren();
-   if(!ops.length){target.append(txt('p','当前客户机暂无命令记录','muted'));return;}
-   for(const op of ops){
+   const merged=[...ops.map(x=>({type:'op',time:x.created_at,entry:x})),
+     ...updates.map(x=>({type:'self-update',time:x.created_at,entry:x}))];
+   merged.sort((a,b)=>Date.parse(b.time||'')-Date.parse(a.time||''));
+   if(!merged.length){target.append(txt('p','当前客户机暂无执行记录','muted'));return;}
+   for(const item of merged){
      const row=txt('div','','remote-op-card'),head=txt('div','','remote-op-header');
-     const label=txt('strong',op.action+' · '+op.state);const meta=txt('span',time(op.created_at));
+     if(item.type==='self-update'){
+       const task=item.entry;
+       head.append(txt('strong','客户自助 · '+task.label+' · '+task.status),
+                   txt('span',time(task.created_at)));
+       row.append(head);
+       if(task.status==='TIMED_OUT'||task.status==='UNKNOWN')
+         row.append(txt('span','结果未知：请先核对 Guest 日志，不会自动重复执行。','muted'));
+       if(task.output_text){
+         const d=document.createElement('details');
+         d.dataset.id=task.request_id;d.open=opened.has(task.request_id);
+         d.append(txt('summary','查看更新结果 · '+task.request_id),
+                  txt('pre',task.output_text.slice(0,1200)));row.append(d);
+       }else row.append(txt('small','更新状态及步骤由客户端回报；暂无额外输出','muted'));
+       target.append(row);continue;
+     }
+     const op=item.entry, selfAction=commands.get(op.id);
+     const actionLabel=selfAction?'客户自助 · '+selfAction.label:op.action;
+     const label=txt('strong',actionLabel+' · '+op.state);const meta=txt('span',time(op.created_at));
      head.append(label,meta);row.append(head);
      if(op.state==='CLAIMED')row.append(txt('span','已投递，等待开始确认','muted'));
      if(op.state==='RUNNING')row.append(txt('span','客户端正在执行','muted'));
@@ -1253,19 +1320,20 @@ window.VMOSelfService=(()=>{
      const ready=vms.filter(v=>v.state==='READY');const signature=ready.map(v=>v.id+':'+v.name).join('|');
      if(choice.dataset.options!==signature){choice.dataset.options=signature;choice.replaceChildren(new Option('请选择客户虚拟机',''));for(const v of ready)choice.add(new Option(v.name,v.id));}
      choice.value=ready.some(v=>v.id===previous)?previous:'';
-     if(choice.value!==vm){stopPreview('虚拟机已切换，预览需要重新手动开启');vm=choice.value;page=1;appsFingerprint='';opsFingerprint='';}
+     if(choice.value!==vm){stopPreview('虚拟机已切换，预览需要重新手动开启');vm=choice.value;page=1;appsFingerprint='';opsFingerprint='';selfFingerprint='';}
      by('remotePreviewToggle').disabled=!vm;
-     if(!vm){installedAgentVersion='';connection=false;commandButton();by('remoteConnection').textContent='选择虚拟机后展示 WSS 状态';by('remotePermissionStatus').textContent='等待选择虚拟机';by('remoteAgentUpgradeBtn').disabled=true;by('remoteAgentUpgradeStatus').textContent='先选择虚拟机';return;}
+     if(!vm){installedAgentVersion='';connection=false;commandButton();by('remoteConnection').textContent='选择虚拟机后展示 WSS 状态';by('remotePermissionStatus').textContent='等待选择虚拟机';by('remoteAgentUpgradeBtn').disabled=true;by('remoteAgentUpgradeStatus').textContent='先选择虚拟机';by('remoteSelfActions').replaceChildren();by('remoteSelfActionsStatus').textContent='请选择虚拟机';return;}
      const g=guests.find(x=>x.vm_id===vm&&!x.revoked_at);
      by('remotePermissionStatus').textContent=g?'已纳管 · 宿主机管理员可下发 SYSTEM 命令':'未完成 Agent 身份注册';
      const requestVm=vm;
-     const [presence,ops,apps,upgrade]=await Promise.all([
+     const [presence,ops,apps,upgrade,self]=await Promise.all([
         api('/api/vms/'+encodeURIComponent(vm)+'/remote/presence'),
         api('/api/vms/'+encodeURIComponent(vm)+'/remote/operations?paged=true&page='+page+'&page_size=15'),
         api('/api/vms/'+encodeURIComponent(vm)+'/remote/apps'),
-        api('/api/vms/'+encodeURIComponent(vm)+'/agent-upgrade')]);
+        api('/api/vms/'+encodeURIComponent(vm)+'/agent-upgrade'),
+         api('/api/vms/'+encodeURIComponent(vm)+'/remote/self-actions')]);
      if(at!==seq||requestVm!==by('remoteVm').value)return;
-     present(presence);renderOps(ops);renderApps(apps);renderAgentUpgrade(upgrade);
+     present(presence);renderOps(ops,self);renderApps(apps);renderAgentUpgrade(upgrade);renderSelfActions(self);
    }catch(e){by('remoteConnection').textContent='状态获取失败：'+e.message;connection=false;commandButton();}
  }
  async function submit(kind,data){
