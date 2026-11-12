@@ -209,6 +209,28 @@ def _launch(program: Path, launcher: Path) -> dict:
     return _start_process(session,argv,str(program))
 
 
+
+def version_from_source_file(directory: Path, relative: str) -> str:
+    """Verify the *same* file that established the server release version.
+
+    EXE ProductVersion can legitimately differ from a package's semantic
+    VERSION. Never compare unrelated sources and incorrectly roll back.
+    """
+    file = directory / safe_relative(relative)
+    if not file.is_file() or file.is_symlink() or file.stat().st_size > 32768:
+        return ''
+    try:
+        data = file.read_text(encoding='utf-8-sig').strip()
+        if file.suffix.lower()=='.json':
+            payload=json.loads(data)
+            value=(payload.get('version') or payload.get('appVersion')) if isinstance(payload,dict) else ''
+        else:
+            value=data.splitlines()[0].strip() if data else ''
+        return value if isinstance(value,str) and VERSION.fullmatch(value) else ''
+    except (OSError, ValueError, UnicodeError, TypeError, IndexError):
+        return ''
+
+
 def _strict_zip_folder(archive: Path, folder: str, launcher: Path):
     with zipfile.ZipFile(archive) as z:
         files=[i.filename.replace('\\','/') for i in z.infolist() if not i.is_dir()]
@@ -309,8 +331,10 @@ def update_portable(options: dict, archive: Path, task_id: str, version: str,
         phase('swapped')
         installed=installed_version(program,executable.as_posix(),version_file)
         # Check when both source and installed version are actually verifiable.
-        if profile.get('version_source','').startswith('zip:') and installed['verified'] and installed['version'] != version:
-            raise RuntimeError('PORTABLE_INSTALLED_VERSION_MISMATCH')
+        if profile.get('version_source','').startswith('zip:'):
+            rel=profile['version_source'][4:]
+            if version_from_source_file(program,rel) != version:
+                raise RuntimeError('PORTABLE_INSTALLED_VERSION_MISMATCH')
         if was_running:
             launch()
             healthy=False
