@@ -53,6 +53,8 @@ jobs:
         run: python -m unittest discover -s tests -p test_update_launch.py -v
       - name: Check admin JavaScript syntax
         run: node --check app/ui/admin.js
+      - name: Regression - portable ZIP, versions and prior-running-state recovery
+        run: python -m unittest discover -s tests -p test_portable_catalog.py -v
       - name: Regression test version consistency
         shell: bash
         run: |
@@ -93,7 +95,8 @@ jobs:
         run: |
           foreach ($file in @('scripts/host/Apply-GitHubUpdate.ps1',
                               'scripts/host/Test-GitHubUpdate.ps1',
-                              'scripts/host/Control-VMOHost.ps1')) {
+                              'scripts/host/Control-VMOHost.ps1',
+                              'guest_agent/Portable-Processes.ps1')) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
