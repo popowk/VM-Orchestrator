@@ -188,7 +188,7 @@ function vmCard(vm){let card=el('div','vm-card'),head=el('div','vm-title'),name=
  let meta=el('div','vm-meta');meta.append(badge(vm.state));if(vm.state==='READY')meta.append(badge(vm.power_state));card.append(meta);
  let actions=el('div','vm-buttons');actions.append(btn('详情 / 快照','ghost',()=>openDetail(vm.id)));
  if(vm.state==='READY'){
-  actions.append(btn('开机','primary',()=>vmAction(vm,'start'),vm.power_state!=='POWERED_OFF'));
+  actions.append(btn(vm.power_state==='SUSPENDED'?'恢复运行':'开机','primary',()=>vmAction(vm,'start'),!['POWERED_OFF','SUSPENDED'].includes(vm.power_state)));
   actions.append(btn('软关机','ghost',()=>vmAction(vm,'stop'),vm.power_state!=='POWERED_ON'));
   actions.append(btn('强制关机','danger',()=>hardStop(vm),vm.power_state!=='POWERED_ON'));
   actions.append(btn('状态诊断','ghost',()=>openDiagnostics(vm)));
@@ -232,6 +232,7 @@ function renderJobs(){
 }
 async function submitJob(path,method='POST',data){let ret=await request(path,method,data);if(ret.job_id){state.watched.add(ret.job_id);toast('任务已提交：'+ret.job_id);await refresh();}return ret;}
 async function vmAction(vm,what){if(what==='stop' && !confirm(`确认让 ${vm.name} 执行正常软关机？`))return;
+ if(what==='start' && vm.power_state==='SUSPENDED' && !confirm(`确定恢复「${vm.name}」挂起前的运行状态？\n不会删除 .vmss 文件或丢弃挂起的内存。`))return;
  try{await submitJob(`/api/vms/${encodeURIComponent(vm.id)}/${what}`,'POST',what==='stop'?{mode:'soft'}:undefined);}catch(e){toast(e.message,true);}}
 async function hardStop(vm){
   if(vm.power_state!=='POWERED_ON')return;
