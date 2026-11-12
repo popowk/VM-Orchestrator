@@ -155,17 +155,29 @@ def scan_c_dsh(max_entries: int = 32, base: Path = Path('C:/dsh')) -> dict:
             files=[x for x in sorted(folder.iterdir(),key=lambda x:x.name.casefold())
                    if x.is_file() and not x.is_symlink() and
                    x.suffix.lower() in ALLOWED_START][:20]
+            if not files:
+                # Some portable apps keep the actual launcher under a bin/
+                # folder. Inspect one child level, excluding mutable state.
+                for child in sorted(folder.iterdir(),key=lambda x:x.name.casefold())[:12]:
+                    if (child.is_symlink() or not child.is_dir() or
+                        child.name.lower() in PRESERVE):
+                        continue
+                    files.extend(x for x in sorted(child.iterdir(),key=lambda x:x.name.casefold())[:20]
+                                 if x.is_file() and not x.is_symlink() and
+                                 x.suffix.lower() in ALLOWED_START)
+                    if files:break
             preferred=next((x for x in files if x.name.lower()=='launcher.bat'),None)
             preferred=preferred or next((x for x in files if x.name.lower() in ('start.cmd','start.bat')),None)
             preferred=preferred or next((x for x in files if x.suffix.lower()=='.exe'),None)
             if not preferred:
                 continue
-            hint=installed_version(folder,preferred.name)
+            relative=preferred.relative_to(folder).as_posix()
+            hint=installed_version(folder,relative)
             findings[folder.name[:75]] = {
                 'version_hint':hint['version'][:40],
                 'version_verified':hint['verified'],
                 'source':hint['source'],
-                'launcher':preferred.name[:100],
+                'launcher':relative[:100],
             }
     except OSError:
         pass
