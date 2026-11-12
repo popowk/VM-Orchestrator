@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.53"></script>
+<script src="/ui/app-route-recover.js?v=1.4.54"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.53">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.54">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.53" defer></script>
+<script src="/ui/admin.js?v=1.4.54" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -125,14 +125,29 @@
         <div id="guestList" class="table-wrap"><div class="muted">载入中...</div></div>
       </section>
       <section class="panel">
-        <div class="panel-head"><div><h2>上传软件更新包</h2><p>SnowLuma：上传 ZIP、填写版本，再在更新包下方为指定客户机填写安装目录并下发。系统自动停止、备份、覆盖、重启及核验。DSH Desktop 保留签名安装器更新方式。</p></div></div>
-        <form id="uploadForm" class="form-grid">
-          <label>软件<select id="packageProduct"><option value="dsh">DSH</option><option value="snowluma">SnowLuma</option></select></label>
-          <label>版本号<input id="packageVersion" required placeholder="1.2.3" maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._+-]{0,39}"></label>
-          <label class="wide">本机审核过的 ZIP 文件<input type="file" id="packageFile" accept=".zip,application/zip" required></label>
-          <div class="form-submit"><button type="submit" class="btn primary">上传到更新库</button></div>
+        <div class="panel-head"><div><h2>便携程序 · 一键自动更新</h2><p>自动读取客户机 C:\dsh 下的软件目录。上传 ZIP，只需填写软件名称及启动文件；ZIP 顶层文件夹即安装目录。更新前记录运行状态，若原来未启动，更新后保持关闭。</p></div></div>
+        <div class="sys-progress" role="note">压缩包规范：<code>MyApp.zip → MyApp/MyApp.exe、MyApp/VERSION</code>。服务端记录包 SHA-256 和版本来源，客户机执行前再次校验。支持 EXE、BAT、CMD 启动文件。</div>
+        <form id="portableUploadForm" class="form-grid">
+          <label>软件名称<input id="portableName" placeholder="例如 SnowLuma、DSH Fish Soul" maxlength="70" required></label>
+          <label>启动文件名（相对于程序目录）<input id="portableLauncher" placeholder="例如 MyApp.exe 或 launcher.bat" maxlength="100" required></label>
+          <label class="wide">软件 ZIP 压缩包（只包含一个顶层文件夹）<input type="file" id="portableZip" accept=".zip,application/zip" required></label>
+          <label>版本号（可不填：自动识别）<input id="portableVersion" placeholder="留空自动：VERSION、JSON 或压缩包指纹" maxlength="40"></label>
+          <label>版本文件路径（可不填）<input id="portableVersionFile" placeholder="例如 VERSION、config/version.txt" maxlength="100"></label>
+          <p class="muted wide">优先读取 VERSION、version.txt、package.json；客户机可读取 EXE 版本资源。无可验证版本时以构建指纹追踪，管理员可手动填写。已登记软件的启动文件不能被新包悄悄更改。</p>
+          <div class="form-submit"><button type="submit" class="btn primary">上传并登记软件更新</button></div>
         </form>
+        <div class="divider"></div>
+        <div class="panel-head"><div><h2>软件版本库与更新下发</h2><p>选择单台或符合条件的全部在线客户机更新。Guest Agent 需要 v2.0.25 以上；更新后恢复原先运行或关闭状态。</p></div></div>
         <div id="packageList" class="table-wrap"></div>
+        <details class="panel" style="margin-top:18px"><summary>高级兼容：旧版 DSH 签名安装器与 SnowLuma 专用更新包</summary>
+          <p class="muted">旧版适配器需要客户机单独配置；建议优先使用统一 ZIP 更新方式。</p>
+        <form id="uploadForm" class="form-grid">
+          <label>旧版适配器<select id="packageProduct"><option value="dsh">DSH（签名安装器）</option><option value="snowluma">SnowLuma（专用更新）</option></select></label>
+          <label>目标版本<input id="packageVersion" required placeholder="1.2.3" maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._+-]{0,39}"></label>
+          <label class="wide">审核过的 ZIP<input type="file" id="packageFile" accept=".zip,application/zip" required></label>
+          <div class="form-submit"><button type="submit" class="btn ghost">提交旧版适配器更新包</button></div>
+        </form>
+        </details>
       </section>
       <section class="panel">
         <div class="panel-head"><div><h2>DSH 插件 · PowerShell 更新</h2><p>不需要上传 ZIP。在已登录 Windows 用户的 DSH Profile 中执行一条插件命令。建议使用固定版本的 add 命令；update 命令不一定能证明实际安装版本。</p></div></div>
