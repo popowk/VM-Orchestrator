@@ -115,7 +115,6 @@ class JobRunner:
 
     def submit(self, job_id: str, vm_id: str, command: str, *, src: Path | None = None,
                name: str | None = None, snap: str | None = None, mode: str = 'soft',
-               test_power: bool = False, include_restore: bool = False,
                start_after_clone: bool = False, enable_screen: bool = False,
                unattended_oobe: bool = False,
                sibling_paths: list[Path] | None = None, vms_root: Path | None = None,
@@ -130,7 +129,7 @@ class JobRunner:
                 vmx = Path(vm['vmx_path'])
                 # Re-check lifecycle at execution time, not merely when queued.
                 # This closes the gap between an old queued START and the expiry job.
-                if command in ('START','FIRSTBOOT_START','REINSTALL_FROM_TEMPLATE','SNAPSHOT_RESTORE') or (command=='ACCEPTANCE_TEST' and test_power):
+                if command in ('START','REINSTALL_FROM_TEMPLATE','SNAPSHOT_RESTORE'):
                     with sqlite3.connect(str(self.store.db_path)) as d:
                         try: row=d.execute('SELECT status,expires_at FROM business_services WHERE vm_id=?',(vm_id,)).fetchone()
                         except sqlite3.OperationalError as exc:
@@ -140,8 +139,6 @@ class JobRunner:
                                 raise VmrunError('Cannot verify paid-instance lifecycle before power operation') from exc
                     if row and (row[0]!='ACTIVE' or (row[1] and datetime.fromisoformat(row[1].replace('Z','+00:00')).timestamp()<=time.time())):
                         raise VmrunError('Cannot power on or restore expired/suspended customer VM')
-                temporary_snapshot = None
-                snapshot_cleaned = False
                 if command == 'REINSTALL_FROM_TEMPLATE':
                     if not src or not vms_root or not reinstall_template_id or not fleet:
                         raise VmrunError('Missing reinstall source or destination')
@@ -308,80 +305,6 @@ class JobRunner:
                     prepare_cloned_vmx_identity(vmx)
                     verify_distinct_vmx_identities(src, vmx)
                     self.store.set_vm_state(vm_id, 'READY')
-                elif command == 'ACCEPTANCE_TEST':
-                    # One-click verification uses only a specifically confirmed, idle VM.
-                    # No clone, hard power-off or customer credential operations.
-                    if self.vmrun.is_running(vmx) or list(vmx.parent.glob('*.vmss')) or list(vmx.parent.glob('*.lck')):
-                        raise VmrunError('Acceptance test requires powered-off, unlocked VM')
-                    if len(self.vmrun.snapshots(vmx)) >= MAX_SNAPSHOTS:
-                        raise VmrunError(f'Maximum {MAX_SNAPSHOTS} snapshots per VM; acceptance test requires a free slot')
-                    test_snapshot = 'vmo_check_' + uuid.uuid4().hex[:10]
-                    temporary_snapshot = test_snapshot
-                    self.store.update_job_detail(job_id, 'Creating temporary snapshot ' + test_snapshot)
-                    self.vmrun.snapshot_create(vmx, test_snapshot)
-                    if test_snapshot not in self.vmrun.snapshots(vmx):
-                        raise VmrunError('Temporary snapshot missing after creation: ' + test_snapshot)
-                    if include_restore:
-                        self.store.update_job_detail(job_id, 'Restoring temporary snapshot ' + test_snapshot)
-                        self.vmrun.snapshot_restore(vmx, test_snapshot)
-                        if self.vmrun.is_running(vmx) or list(vmx.parent.glob('*.vmss')):
-                            raise VmrunError('VM is not powered off after snapshot restore; inspect manually')
-                    self.store.update_job_detail(job_id, 'Deleting temporary snapshot ' + test_snapshot)
-                    self.vmrun.snapshot_delete(vmx, test_snapshot)
-                    if test_snapshot in self.vmrun.snapshots(vmx):
-                        raise VmrunError('Temporary snapshot still listed: ' + test_snapshot)
-                    snapshot_cleaned = True
-                    if test_power:
-                        self.store.update_job_detail(job_id, 'Starting VM; Windows first boot may take time')
-                        self.vmrun.start(vmx)
-                        for _ in range(20):
-                            if self.vmrun.is_running(vmx):
-                                break
-                            time.sleep(1)
-                        else:
-                            raise VmrunError('VM start not confirmed; inspect power state manually')
-                        self.store.update_job_detail(job_id, 'Requesting graceful guest shutdown')
-                        self.vmrun.stop(vmx, 'soft')
-                        for _ in range(120):
-                            if not self.vmrun.is_running(vmx):
-                                break
-                            time.sleep(1)
-                        else:
-                            raise VmrunError('VM did not shut down after soft stop; no hard stop was attempted')
-                    self.store.finish_job(job_id, True,
-                        'Passed: snapshot create/list/delete' +
-                        (', restore' if include_restore else '') +
-                        (', power on/soft off' if test_power else ''))
-                    return
-                elif command == 'FIRSTBOOT_START':
-                    if self.vmrun.is_running(vmx):
-                        raise VmrunError('VM already running')
-                    self.store.update_job_detail(job_id, 'Starting guest for first boot')
-                    self.vmrun.start(vmx)
-                    for _ in range(30):
-                        if self.vmrun.is_running(vmx):
-                            break
-                        time.sleep(1)
-                    else:
-                        raise VmrunError('Guest did not start; inspect VMware Workstation')
-                    self.store.update_job_detail(job_id, 'Waiting up to 5 minutes for VMware Tools')
-                    tools_ready = False
-                    for _ in range(60):
-                        try:
-                            state = self.vmrun.check_tools_state(vmx)
-                            if 'running' in state:
-                                tools_ready = True
-                                break
-                        except VmrunError:
-                            pass
-                        if not self.vmrun.is_running(vmx):
-                            raise VmrunError('Guest powered off during first-boot monitoring')
-                        time.sleep(5)
-                    if tools_ready:
-                        self.store.finish_job(job_id, True, 'VM running; VMware Tools ready. Windows OOBE completion NOT verified. Open screen to inspect.')
-                    else:
-                        self.store.finish_job(job_id, False, 'VM running, but VMware Tools not confirmed within 5 minutes. VM left on. Check screen; no forced restart.')
-                    return
                 elif command == 'START':
                     if self.vmrun.is_running(vmx):
                         raise VmrunError('VM already running')
@@ -422,8 +345,6 @@ class JobRunner:
                     self.store.set_vm_state(vm_id, 'DELETE_ERROR')
                 # Avoid printing subprocess output, VM/guest data and sensitive paths.
                 detail = str(exc) if isinstance(exc, VmrunError) else 'Unexpected host operation failure'
-                if command == 'ACCEPTANCE_TEST' and temporary_snapshot and not snapshot_cleaned:
-                    detail += '; check temp snapshot ' + temporary_snapshot
                 log.exception('VMware operation %s failed for job %s', command, job_id)
                 self.store.finish_job(job_id, False, detail[:300])
         self.pool.submit(work)
