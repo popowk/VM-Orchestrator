@@ -657,6 +657,38 @@ window.addEventListener('DOMContentLoaded',async()=>{
    try{const x=await request(`/api/vms/${encodeURIComponent(vm)}/plugin-command-update`,'POST',{version,command,confirm:true});toast('插件更新任务已提交：'+x.task_id);await refresh();}
    catch(err){toast('插件命令未下发：'+err.message,true);}
  });
+ $('portableUploadForm').addEventListener('submit',async ev=>{
+   ev.preventDefault();
+   const file=$('portableZip').files[0],name=$('portableName').value.trim(),
+         launcher=$('portableLauncher').value.trim(),
+         version=$('portableVersion').value.trim(),
+         versionFile=$('portableVersionFile').value.trim();
+   if(!file||!file.name.toLowerCase().endsWith('.zip'))return toast('请上传 ZIP 压缩包',true);
+   if(file.size>512*1024*1024)return toast('ZIP 最大 512 MB',true);
+   if(!name||!launcher)return toast('软件名称与启动文件不可为空',true);
+   if(!confirm('确认上传已审核的便携程序包？\n\n软件：'+name+'\n启动文件：'+launcher+
+      '\n压缩包：'+file.name+
+      '\n\nZIP 必须只有一个顶层程序文件夹；系统将据此识别安装目录。'))return;
+   const button=$('portableUploadForm').querySelector('button[type="submit"]');
+   button.disabled=true;button.textContent='正在校验 ZIP 并登记…';
+   try{
+     const query=new URLSearchParams({
+       name,launcher,version_override:version,version_file:versionFile
+     });
+     const response=await fetch('/api/fleet/portable/packages?'+query,{
+       method:'POST',credentials:'same-origin',
+       headers:{'X-UI-CSRF':state.csrf,'Content-Type':'application/zip'},
+       body:file
+     });
+     const result=await response.json().catch(()=>({}));
+     if(!response.ok)throw Error(result.detail||'上传失败 HTTP '+response.status);
+     $('portableUploadForm').reset();
+     toast('已登记 '+result.profile.display_name+' · C:\\dsh\\'+result.profile.folder+
+        ' · 版本 '+result.profile.version);
+     await refresh();
+   }catch(error){toast('软件包校验/登记失败：'+error.message,true);}
+   finally{button.disabled=false;button.textContent='上传并登记软件更新';}
+ });
  $('uploadForm').addEventListener('submit',async e=>{
    e.preventDefault();const f=$('packageFile').files[0],product=$('packageProduct').value,version=$('packageVersion').value.trim();
    if(!f||!f.name.toLowerCase().endsWith('.zip'))return toast('只能上传 ZIP',true);
