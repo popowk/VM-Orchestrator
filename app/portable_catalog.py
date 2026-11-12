@@ -204,6 +204,13 @@ class PortableCatalog:
                 (package_id, profile['id'], profile['version_source'],
                  profile['version_file']))
 
+    def release_metadata(self, package_id: str) -> dict:
+        with self._db() as d:
+            r=d.execute(
+                'SELECT profile_id,version_source,version_file FROM portable_package_meta WHERE package_id=?',
+                (package_id,)).fetchone()
+            return dict(r) if r else {}
+
     def get(self, profile_id: str) -> dict | None:
         with self._db() as d:
             r = d.execute('SELECT * FROM portable_profiles WHERE id=?', (profile_id,)).fetchone()
