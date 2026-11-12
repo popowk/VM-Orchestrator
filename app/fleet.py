@@ -264,8 +264,13 @@ class FleetStore:
             portable = pack and re.fullmatch(r'portable-(p-[0-9a-f]{20})', pack['product'])
             if portable:
                 profile = d.execute(
-                    'SELECT id,folder,launcher,version_file,version_source FROM portable_profiles WHERE id=?',
-                    (portable.group(1),)).fetchone()
+                    '''SELECT p.id,p.folder,p.launcher,
+                        COALESCE(m.version_file,p.version_file) AS version_file,
+                        COALESCE(m.version_source,p.version_source) AS version_source
+                       FROM portable_profiles AS p
+                       JOIN portable_package_meta AS m ON m.profile_id=p.id
+                       WHERE p.id=? AND m.package_id=?''',
+                    (portable.group(1), package_id)).fetchone()
                 if not profile:
                     raise FleetError('此更新包没有对应的软件目录配置，请重新上传')
                 # The browser cannot provide a different path or executable.
