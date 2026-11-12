@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.54 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.55 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -1331,7 +1331,7 @@ window.VMOSelfService=(()=>{
         api('/api/vms/'+encodeURIComponent(vm)+'/remote/operations?paged=true&page='+page+'&page_size=15'),
         api('/api/vms/'+encodeURIComponent(vm)+'/remote/apps'),
         api('/api/vms/'+encodeURIComponent(vm)+'/agent-upgrade'),
-         api('/api/vms/'+encodeURIComponent(vm)+'/remote/self-actions')]);
+         api('/api/vms/'+encodeURIComponent(vm)+'/remote/self-actions').catch(err=>({items:[],executions:[],message:'自助操作读取失败：'+err.message}))]);
      if(at!==seq||requestVm!==by('remoteVm').value)return;
      present(presence);renderOps(ops,self);renderApps(apps);renderAgentUpgrade(upgrade);renderSelfActions(self);
    }catch(e){by('remoteConnection').textContent='状态获取失败：'+e.message;connection=false;commandButton();}
