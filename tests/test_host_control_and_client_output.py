@@ -99,7 +99,8 @@ class UIContractsTests(unittest.TestCase):
         self.assertIn("url.searchParams.set('page',page)", js)
         self.assertIn("new URLSearchParams(window.location.search).get('page')", js)
         self.assertNotIn("window.location.reload();return;", js[js.index('function show(data)'):js.index('window.VMOSystemUpdate=')])
-        self.assertIn('v=1.4.53', html)
+        expected = Path('VERSION').read_text(encoding='utf-8').strip()
+        self.assertIn('v='+expected, html)
 
     def test_customer_history_displays_bounded_text_not_generic_code(self):
         portal = Path('app/client_portal.py').read_text(encoding='utf-8')
