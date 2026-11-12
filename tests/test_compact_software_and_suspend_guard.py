@@ -60,8 +60,12 @@ class StreamlinedUpdateContractTests(unittest.TestCase):
 
     def test_obsolete_vm_controls_and_modals_removed(self):
         for term in ('首次启动监控','一键验收','id="testDialog"','id="screenDialog"',
-                     '查看屏幕截图','启用本机截图'):
+                     '查看屏幕截图'):
             self.assertNotIn(term,self.html+self.js)
+        # Cloning a VM may still configure its VNC for remote preview,
+        # but the standalone per-VM enable button is intentionally gone.
+        self.assertNotIn("btn('启用本机截图'",self.js)
+        self.assertNotIn("btn('启用截图'",self.js)
         self.assertNotIn('firstboot-start',self.main)
         self.assertNotIn('acceptance-test',self.main)
         self.assertIn('screen-preview.jpg',self.main)  # keep remote preview
