@@ -915,6 +915,69 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
         db.audit(original['service_ref'],'SELF_ACTION_MANUAL_REVIEW',original['action_kind'])
         return {'status':'ACKNOWLEDGED','note':'Review recorded; no customer-operation restriction was applied'}
 
+
+    def remote_self_service_for_vm(vm_id: str):
+        """Resolve customer operations by a server-side VM binding, never by client input."""
+        vm=store.get_vm(vm_id)
+        if not vm or vm['state']!='READY':
+            raise HTTPException(404,'Managed VM not ready')
+        with db.db() as connection:
+            row=connection.execute(
+                'SELECT * FROM business_services WHERE vm_id=? LIMIT 1',(vm_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    @app.get('/api/vms/{vm_id}/remote/self-actions', dependencies=[Depends(authorized)])
+    def admin_remote_self_actions(vm_id: str):
+        """Reuse customer-visible preset actions in the remote-admin page.
+
+        Commands/working directories are intentionally never sent to the
+        embedded widget. Admin sees only labels, descriptions and results.
+        """
+        service=remote_self_service_for_vm(vm_id)
+        if not service:
+            return {'items':[],'executions':[],
+                    'message':'该虚拟机尚未关联思博客户服务，因此没有可用的客户自助操作'}
+        if service['status']!='ACTIVE' or (service.get('expires_at') and
+              is_due(parse_utc(service['expires_at']))):
+            return {'items':[],'executions':[],
+                    'message':'客户服务已暂停或到期；不能从远程运维触发其自助操作'}
+        actions=[self_actions.public(a) for a in
+                 self_actions.list(service['product_ref'], enabled_only=True)]
+        rows=self_actions.reconcile(service['service_ref'],vm_id)
+        history=[]
+        for row in rows:
+            visible={k:row.get(k) for k in (
+                'request_id','action_id','action_kind','operation_id',
+                'status','created_at','updated_at')}
+            visible['label']=row.get('action_label') or '客户自助操作'
+            if row['action_kind']=='SOFTWARE_UPDATE' and row.get('operation_id'):
+                with self_actions.db() as connection:
+                    task=connection.execute(
+                        'SELECT status,message FROM guest_tasks WHERE id=? AND vm_id=?',
+                        (row['operation_id'],vm_id)).fetchone()
+                if task:
+                    visible['output_text']=str(task['message'] or '')[:800]
+            history.append(visible)
+        return {'items':actions,'executions':history,
+                'message':('可执行 '+str(len(actions))+' 项客户自助操作'
+                           if actions else '该客户套餐目前没有已启用的自助操作')}
+
+    @app.post('/api/vms/{vm_id}/remote/self-actions/{action_id}/execute',
+              dependencies=[Depends(authorized)],status_code=202)
+    def admin_remote_execute_self_action(vm_id: str,action_id: str,payload: ExecuteInput):
+        """Admin trigger uses exactly the same audited, idempotent customer path."""
+        service=remote_self_service_for_vm(vm_id)
+        if not service:
+            raise HTTPException(404,'该虚拟机未关联客户服务')
+        if service['status']!='ACTIVE' or (service.get('expires_at') and
+                is_due(parse_utc(service['expires_at']))):
+            raise HTTPException(403,'客户服务已暂停或到期，不允许执行')
+        result=client_execute_self_action(action_id,payload,service)
+        db.audit(service['service_ref'],'ADMIN_REMOTE_SELF_ACTION',
+                 action_id[:80])
+        return result
+
     @app.get('/api/business/admin/self-actions', dependencies=[Depends(authorized)])
     def admin_self_actions():
         return self_actions.list()
