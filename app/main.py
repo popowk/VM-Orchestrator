@@ -1013,7 +1013,12 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
             raise
 
     @app.get('/api/fleet/packages', dependencies=[Depends(authorized)])
-    def packages(): return fleet.packages()
+    def packages():
+        result=fleet.packages()
+        for item in result:
+            if item['product'].startswith('portable-p-'):
+                item.update(portable_catalog.release_metadata(item['id']))
+        return result
 
     @app.post('/api/fleet/packages/{product}/{version}', dependencies=[Depends(authorized)],status_code=201)
     async def upload_package(product: str, version: str, request: Request):
