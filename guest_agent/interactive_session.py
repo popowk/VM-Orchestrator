@@ -43,11 +43,18 @@ def _get_active_session():
 
 def _windows_process_command(cmd, system_root):
     """Return (application_name, raw Win32 command_line) without CMD quote corruption."""
+    if cmd[0].lower()=='exe':
+        # Portable apps are launched directly from the approved C:\\dsh
+        # installation path, never via a command shell or extra arguments.
+        exe=os.path.abspath(cmd[1])
+        if not os.path.isabs(exe) or not os.path.isfile(exe):
+            raise InteractiveLaunchError('PORTABLE_EXECUTABLE_NOT_FOUND')
+        return exe,subprocess.list2cmdline([exe])
     if cmd[0].lower()=='cmd.exe':
         exe=os.path.join(system_root,'System32','cmd.exe')
-        # CMD is not a C-runtime argv parser: DO NOT pass the /K payload
-        # through subprocess.list2cmdline (which uses backslash+quote).
-        return exe,f'"{exe}" /D /K {cmd[3]}'
+        operation='/C' if len(cmd)>2 and cmd[2].upper()=='/C' else '/K'
+        # CMD needs its quoted command text verbatim, not list2cmdline.
+        return exe,f'"{exe}" /D {operation} {cmd[3]}'
     exe=os.path.join(system_root,'System32','WindowsPowerShell','v1.0','powershell.exe')
     return exe,subprocess.list2cmdline([exe]+cmd[1:])
 
