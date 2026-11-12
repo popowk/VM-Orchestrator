@@ -991,12 +991,10 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
                 validate_command_directory(payload.cwd)
             if payload.kind=='SOFTWARE_UPDATE':
                 package=fleet.package(payload.package_id)
-                if not package:raise ValueError('Approved update package not found')
+                if not package or not package['product'].startswith('portable-p-'):
+                    raise ValueError('仅允许绑定统一便携程序 ZIP 更新包')
                 if payload.install_dir:
-                    from .update_commands import validate_install_dir
-                    validate_install_dir(payload.install_dir)
-                    if package['product']!='snowluma':
-                        raise ValueError('Install directory override only supports SnowLuma')
+                    raise ValueError('新版本由 ZIP 顶层目录自动识别安装路径，不能手工覆盖')
             return self_actions.save(payload)
         except LookupError:raise HTTPException(404,'Operation not found')
         except (ValueError,RemoteError) as exc:raise HTTPException(422,str(exc))
