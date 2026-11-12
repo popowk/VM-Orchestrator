@@ -39,6 +39,7 @@ from .unattend import provisioning_status, read_secret
 from .admin_auth import AdminAuth, AdminLoginLocked
 from .cleanup import CleanupManager, CleanupError
 from .host_control import HostControl, HostControlError
+from .portable_catalog import PortableCatalog, PortableCatalogError, inspect_zip
 from .host_metrics import read_host_metrics
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$')
@@ -158,6 +159,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     vms_root.mkdir(parents=True, exist_ok=True)
     store = TemplateStore(settings.db_path)
     fleet = FleetStore(settings.db_path)
+    portable_catalog = PortableCatalog(settings.db_path)
     remote = RemoteStore(settings.db_path)
     agent_updates = AgentUpdateManager(settings.db_path, Path(__file__).resolve().parent.parent / "guest_agent")
     admin_auth = AdminAuth(settings.db_path, settings.admin_key, os.environ.get('VMO_BUSINESS_KEY',''))
@@ -166,7 +168,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     vmrun = vmrun or Vmrun(settings.vmrun_path)
     secret_root = settings.db_path.parent / 'provision-secrets'
     runner = JobRunner(store, vmrun, secret_root, settings.admin_key)
-    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.53',
+    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.54',
                   description='Local management of sealed templates and VMware Workstation VMs.')
 
     # UI session is an HttpOnly, SameSite=Strict cookie signed using a key derived
@@ -957,6 +959,58 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         if not store.get_vm(vm_id): raise HTTPException(404,'VM not found')
         fleet.revoke_vm(vm_id)
         return {'vm_id':vm_id,'revoked':True}
+
+    @app.get('/api/fleet/portable/profiles', dependencies=[Depends(authorized)])
+    def portable_program_profiles():
+        return portable_catalog.all()
+
+    @app.post('/api/fleet/portable/packages', dependencies=[Depends(authorized)], status_code=201)
+    async def upload_portable_package(
+            request: Request, name: str, launcher: str,
+            version_override: str = '', version_file: str = ''):
+        """One ZIP/root-directory, an approved launcher name and optional version hints.
+
+        The Host cannot inspect a Windows EXE's version reliably on Linux;
+        Guest detects installed EXE ProductVersion after the update.
+        """
+        root=settings.db_path.parent/'approved_packages'
+        root.mkdir(parents=True, exist_ok=True)
+        package_id=str(uuid.uuid4())
+        path=root/(package_id+'.zip')
+        size=0
+        checksum=hashlib.sha256()
+        try:
+            with path.open('xb') as output:
+                async for part in request.stream():
+                    size+=len(part)
+                    if size>512*1024*1024:
+                        raise HTTPException(413, 'ZIP 超过 512 MB 限制')
+                    output.write(part)
+                    checksum.update(part)
+            if size<50 or not zipfile.is_zipfile(path):
+                raise HTTPException(422, '必须上传有效的 ZIP 压缩包')
+            profile=inspect_zip(path, launcher, display_name=name,
+                                version_override=version_override,
+                                version_file=version_file, sha256=checksum.hexdigest())
+            with zipfile.ZipFile(path) as z:
+                if z.testzip():
+                    raise HTTPException(422, 'ZIP 文件 CRC 校验失败')
+            portable_catalog.upsert(profile)
+            fleet.add_package('portable-'+profile['id'],profile['version'],
+                              checksum.hexdigest(),size,
+                              'approved-portable-update.zip',package_id)
+            portable_catalog.record_package(package_id,profile)
+            return {'package':fleet.package(package_id),'profile':profile,
+                    'note':('版本已经通过 ZIP 内容识别'
+                            if profile['version_source'].startswith('zip:') else
+                            '版本来自手动填写' if profile['version_source']=='manual' else
+                            'ZIP 无版本清单；以压缩包 SHA-256 指纹跟踪发布版本')}
+        except PortableCatalogError as exc:
+            path.unlink(missing_ok=True)
+            raise HTTPException(422,str(exc)) from exc
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
 
     @app.get('/api/fleet/packages', dependencies=[Depends(authorized)])
     def packages(): return fleet.packages()
