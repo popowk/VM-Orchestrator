@@ -616,6 +616,10 @@ window.addEventListener('DOMContentLoaded',async()=>{
      $('reinstallDialog').close();navigate('jobs');
    }catch(err){toast('重装提交失败：'+err.message,true);}
  });
+ $('softwareGuestSearch').addEventListener('input',()=>{softwareGuestUI.page=1;renderGuestInventory();});
+ $('softwareGuestFilter').addEventListener('change',()=>{softwareGuestUI.page=1;renderGuestInventory();});
+ $('softwareGuestPrev').addEventListener('click',()=>{if(softwareGuestUI.page>1){softwareGuestUI.page--;renderGuestInventory();}});
+ $('softwareGuestNext').addEventListener('click',()=>{softwareGuestUI.page++;renderGuestInventory();});
  $('portableUploadForm').addEventListener('submit',async ev=>{
    ev.preventDefault();
    const file=$('portableZip').files[0],name=$('portableName').value.trim(),
