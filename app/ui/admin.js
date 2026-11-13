@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.56 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.57 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -500,16 +500,19 @@ function renderFleet(){
    for(const p of releases){
      const profile=state.portableProfiles.find(x=>p.product==='portable-'+x.id);
      if(!profile)continue;
+     // All online Agent 2.0.27+ clients, whether or not the program exists.
      const eligible=state.vms.filter(machine=>{
        const g=guestMap.get(machine.id);
        if(machine.state!=='READY'||!g||g.revoked_at||!g.last_seen||
           Date.now()-new Date(g.last_seen).getTime()>600000)return false;
        const ver=String(g.reported?.guest_agent||'').split('.').map(Number);
-       if(ver.length!==3||ver.some(x=>!Number.isInteger(x))||
-          (ver[0]===2&&ver[1]===0&&ver[2]<25)||ver[0]<2)return false;
-       return Object.keys(g.reported?.portable_software||{}).some(name=>
-         name.toLocaleLowerCase()===profile.folder.toLocaleLowerCase());
+       return ver.length===3&&ver.every(Number.isInteger)&&
+          (ver[0]>2||(ver[0]===2&&(ver[1]>0||ver[2]>=27)));
      });
+     const installedCount=eligible.filter(machine=>{
+       const report=guestMap.get(machine.id)?.reported?.portable_software||{};
+       return Object.keys(report).some(x=>x.toLocaleLowerCase()===profile.folder.toLocaleLowerCase());
+     }).length;
      const details=el('details','software-release');
      details.open=softwareGuestUI.releaseExpanded.has(p.id);
      details.addEventListener('toggle',()=>{
@@ -520,43 +523,44 @@ function renderFleet(){
      summary.append(el('strong','software-guest-name',profile.display_name+' · '+p.version),
        el('span','software-guest-brief','目标 C:\\dsh\\'+profile.folder),
        el('span','software-guest-state'+(eligible.length?' is-online':' is-offline'),
-          '可更新 '+eligible.length+' 台'));
+          '可部署 '+eligible.length+' 台'));
      details.append(summary);
      const body=el('div','software-guest-details');
      body.append(el('p','muted','启动：'+profile.launcher+' · 版本来源：'+
        (p.version_source||'未知')+' · SHA-256：'+p.sha256.slice(0,24)+'…'));
      const controls=el('div','software-release-actions');
-     const select=el('select');select.setAttribute('aria-label','选择要更新的客户机');
-     select.append(new Option('选择目标客户机',''));
-     eligible.forEach(machine=>select.add(new Option(machine.name,machine.id)));
-     select.value=eligible.some(x=>x.id===state.packageSelections[p.id])?
-       state.packageSelections[p.id]:'';
+     const select=el('select');select.setAttribute('aria-label','选择单台或全部客户机');
+     select.append(new Option('请选择单台或全部',''));
+     eligible.forEach(machine=>select.add(new Option(machine.name+'（'+(
+       Object.keys(guestMap.get(machine.id)?.reported?.portable_software||{}).some(n=>
+         n.toLocaleLowerCase()===profile.folder.toLocaleLowerCase())?'已安装':'首次安装'
+     )+'）',machine.id)));
+     if(eligible.length)select.add(new Option('全部在线客户机（'+eligible.length+' 台）','__ALL__'));
+     const previous=state.packageSelections[p.id]||'';
+     select.value=eligible.some(x=>x.id===previous)||previous==='__ALL__'?previous:'';
      select.addEventListener('change',()=>{state.packageSelections[p.id]=select.value;});
-     const submit=async selected=>{
-       const machine=state.vms.find(x=>x.id===selected);if(!machine)throw Error('目标客户机无效');
-       return request('/api/vms/'+encodeURIComponent(machine.id)+'/software-update','POST',
-         {package_id:p.id,confirm_backup_and_compatibility:true});
-     };
-     controls.append(select,btn('下发更新','primary small',async()=>{
-       if(!select.value)return toast('先选择客户机',true);
-       const machine=state.vms.find(x=>x.id===select.value);
-       if(!confirm('对 '+machine.name+' 更新 '+profile.display_name+' '+p.version+'？\n'+
-         '仅匹配软件原目录；原来关闭则更新后不启动。请确认已备份或制作快照。'))return;
-       try{const result=await submit(select.value);toast('任务已排队：'+result.task_id);await refresh();}
-       catch(e){toast('下发失败：'+e.message,true);}
+     controls.append(select,btn('下发软件','primary small',async()=>{
+       if(!select.value)return toast('请选择一台或全部客户机',true);
+       const all=select.value==='__ALL__';
+       const target=all?'全部 '+eligible.length+' 台在线客户机':
+         (eligible.find(x=>x.id===select.value)?.name||'指定客户机');
+       if(!confirm('确认对 '+target+' 部署 '+profile.display_name+' '+p.version+'？\n\n'+
+          '已安装：自动备份替换；先前在运行则恢复运行。\n'+
+          '未安装：下载校验并首次解压到 C:\\dsh\\'+profile.folder+'，默认保持关闭。\n'+
+          '离线、Guest 版本不足或正在更新的客户机将跳过。'))return;
+       try{
+         const result=await request('/api/fleet/portable/deploy','POST',{
+           package_id:p.id,scope:all?'all':'one',
+           vm_id:all?null:select.value,confirm:true,confirm_all:all
+         });
+         const failed=result.skipped||[];
+         toast('已排队 '+result.queued.length+' / '+result.total+' 台'+
+           (failed.length?'；跳过 '+failed.length+' 台，'+failed.slice(0,3)
+             .map(x=>(state.vms.find(v=>v.id===x.vm_id)?.name||x.vm_id)+'：'+x.reason).join('；'):''),
+           Boolean(failed.length));
+         await refresh();
+       }catch(e){toast('部署失败：'+e.message,true);}
      },!eligible.length));
-     if(eligible.length>1)controls.append(btn('批量更新 '+eligible.length+' 台','ghost small',async()=>{
-       if(!confirm('对 '+eligible.length+' 台在线客户机下发 '+profile.display_name+
-         ' '+p.version+' 更新任务？\n每台独立校验和回滚；不对未知状态自动重试。'))return;
-       let queued=0;const failed=[];
-       for(const machine of eligible){
-         try{await submit(machine.id);queued++;}
-         catch(e){failed.push(machine.name+': '+e.message);}
-       }
-       toast('已排队 '+queued+' / '+eligible.length+' 台'+
-         (failed.length?'；失败：'+failed.join('、'):''),
-         Boolean(failed.length));await refresh();
-     }));
      controls.append(btn('删除版本包','danger small',async()=>{
        if(!confirm('删除 '+profile.display_name+' '+p.version+' 的 ZIP 更新包？正在执行及绑定的任务将阻止删除。'))return;
        try{await request('/api/fleet/packages/'+encodeURIComponent(p.id),'DELETE');
@@ -566,7 +570,8 @@ function renderFleet(){
        }catch(e){toast(e.message,true);}
      }));
      body.append(controls);
-     if(!eligible.length)body.append(el('p','muted','暂无符合条件的在线 Guest；需要 Agent v2.0.25+ 及匹配的 C:\\dsh 程序目录。'));
+     body.append(el('p','muted','当前在线可部署 '+eligible.length+' 台，其中已安装 '+installedCount+' 台，首次安装 '+(eligible.length-installedCount)+' 台。'));
+     if(!eligible.length)body.append(el('p','muted','需要 Guest Agent v2.0.27+ 且最近 10 分钟有心跳。'));
      details.append(body);pack.append(details);
    }
  }
