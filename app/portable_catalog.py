@@ -166,6 +166,21 @@ class PortableCatalog:
                 version_source TEXT NOT NULL, version_file TEXT NOT NULL,
                 uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
             d.execute('CREATE UNIQUE INDEX IF NOT EXISTS portable_profiles_folder ON portable_profiles(folder COLLATE NOCASE)')
+            columns={row[1] for row in d.execute('PRAGMA table_info(portable_profiles)')}
+            if 'auto_deploy' not in columns:
+                d.execute('ALTER TABLE portable_profiles ADD COLUMN auto_deploy INTEGER NOT NULL DEFAULT 0')
+            if 'active_package_id' not in columns:
+                d.execute("ALTER TABLE portable_profiles ADD COLUMN active_package_id TEXT NOT NULL DEFAULT ''")
+                # One initial active release per existing software; older ZIPs
+                # remain archived for task history and explicit deletion.
+                d.execute("""
+                    UPDATE portable_profiles SET active_package_id=COALESCE((
+                        SELECT id FROM update_packages
+                        WHERE product='portable-'||portable_profiles.id AND deleted_at IS NULL
+                        ORDER BY uploaded_at DESC, rowid DESC LIMIT 1), '')
+                """)
+            d.execute('CREATE INDEX IF NOT EXISTS portable_package_meta_profile ON portable_package_meta(profile_id,uploaded_at)')
+
 
     @contextmanager
     def _db(self):
@@ -200,11 +215,44 @@ class PortableCatalog:
         return profile
 
     def record_package(self, package_id: str, profile: dict):
+        """Publish exactly one active release per folder and retire old queued tasks."""
         with self._db() as d:
+            d.execute('BEGIN IMMEDIATE')
             d.execute('''INSERT INTO portable_package_meta
                 (package_id,profile_id,version_source,version_file) VALUES(?,?,?,?)''',
                 (package_id, profile['id'], profile['version_source'],
                  profile['version_file']))
+            result=d.execute('UPDATE portable_profiles SET active_package_id=? WHERE id=?',
+                             (package_id,profile['id']))
+            if result.rowcount!=1:
+                raise PortableCatalogError('软件目录档案不存在，无法激活版本')
+            d.execute('''UPDATE guest_tasks SET status='CANCELLED',
+                message='已由同软件的新生效版本替代，旧任务未执行',completed_at=CURRENT_TIMESTAMP
+                WHERE status='QUEUED' AND package_id!=? AND package_id IN (
+                    SELECT id FROM update_packages WHERE product=?)''',
+                (package_id,'portable-'+profile['id']))
+
+    def set_auto_deploy(self, profile_id: str, enabled: bool) -> dict:
+        """Persist the operator's explicit fleet-wide deployment policy."""
+        with self._db() as d:
+            d.execute('BEGIN IMMEDIATE')
+            current=d.execute('SELECT id,active_package_id FROM portable_profiles WHERE id=?',
+                              (profile_id,)).fetchone()
+            if not current:
+                raise PortableCatalogError('软件档案不存在')
+            if enabled and not current['active_package_id']:
+                raise PortableCatalogError('该软件尚无当前生效的 ZIP 版本')
+            d.execute('UPDATE portable_profiles SET auto_deploy=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                      (int(enabled),profile_id))
+            if not enabled:
+                d.execute('''UPDATE guest_tasks SET status='CANCELLED',
+                    message='管理员关闭了此软件的自动推送；任务未执行',completed_at=CURRENT_TIMESTAMP
+                    WHERE status='QUEUED' AND package_id IN (
+                        SELECT id FROM update_packages WHERE product=?)
+                    AND json_extract(options_json,'$.auto_deploy')=1''',
+                    ('portable-'+profile_id,))
+        return self.get(profile_id)
+
 
     def release_metadata(self, package_id: str) -> dict:
         with self._db() as d:
