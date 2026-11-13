@@ -169,6 +169,7 @@ class FleetStore:
                           (smbios,vm_id))
             d.execute('UPDATE guest_enrollment SET last_seen=?, reported_json=? WHERE vm_id=?',
                       (now(),json.dumps(report, ensure_ascii=False),vm_id))
+        self.reconcile_auto_deploy(vm_id)
 
     def guests(self):
         with self.db() as d:
@@ -229,6 +230,8 @@ class FleetStore:
                 except OSError as ex:raise FleetError('无法移走更新包，文件可能正在被使用') from ex
             try:
                 d.execute('UPDATE update_packages SET deleted_at=? WHERE id=? AND deleted_at IS NULL',(now(),package_id))
+                d.execute("UPDATE portable_profiles SET auto_deploy=0,active_package_id='' WHERE active_package_id=?",
+                          (package_id,))
                 if d.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='vmo_security_audit'").fetchone():
                     import time
                     d.execute('INSERT INTO vmo_security_audit(id,action,detail,at) VALUES(?,?,?,?)',
@@ -250,6 +253,18 @@ class FleetStore:
             busy = d.execute("SELECT id FROM guest_tasks WHERE vm_id=? AND status IN ('QUEUED','CLAIMED','RUNNING')", (vm_id,)).fetchone()
             if not vm or vm['state'] != 'READY' or not agent or agent['revoked_at'] or not pack or busy:
                 raise FleetError('VM not ready, no active agent, unknown package or previous update pending')
+            active=d.execute('SELECT auto_deploy FROM portable_profiles WHERE active_package_id=?',
+                             (package_id,)).fetchone()
+            if not active:
+                raise FleetError('该版本不是当前生效版本，请使用最新的软件 ZIP')
+            is_auto=bool(options and options.get('auto_deploy'))
+            if is_auto and not active['auto_deploy']:
+                raise FleetError('自动推送已被管理员关闭')
+            if is_auto and d.execute(
+                    'SELECT 1 FROM guest_tasks WHERE vm_id=? AND package_id=? LIMIT 1',
+                    (vm_id,package_id)).fetchone():
+                raise FleetError('此版本已经向该机器下发过，自动模式不重复执行')
+
             # New updates are exclusively the server-reviewed portable ZIP catalog.
             # Retain historical task rows for auditing; do not dispatch old modes.
             portable=re.fullmatch(r'portable-(p-[0-9a-f]{20})',pack['product'])
@@ -271,7 +286,7 @@ class FleetStore:
                 (portable.group(1),package_id)).fetchone()
             if not profile:
                 raise FleetError('更新包没有可用的软件目录配置，请重新上传')
-            options={'mode':'portable_catalog','portable':dict(profile)}
+            options={'mode':'portable_catalog','portable':dict(profile),'auto_deploy':is_auto}
             raw_version=report.get('guest_agent','')
             try:
                 parts=tuple(int(x) for x in raw_version.split('.'))
@@ -289,6 +304,34 @@ class FleetStore:
             d.execute("INSERT INTO guest_tasks(id,vm_id,package_id,status,created_at,options_json) VALUES(?,?,?,'QUEUED',?,?)",
                       (id_,vm_id,package_id,now(),json.dumps(options or {},ensure_ascii=False)))
         return id_
+
+    def reconcile_auto_deploy(self, vm_id: str | None = None) -> dict:
+        """Best-effort, idempotent adoption of each opted-in active release.
+
+        Called after heartbeat, new upload or toggling auto on. Terminal
+        results are never retried automatically, even if they failed.
+        """
+        with self.db() as d:
+            if not d.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='portable_profiles'").fetchone():
+                return {'queued':[], 'skipped':[], 'policies':0}
+            rows=d.execute('''SELECT p.id,p.active_package_id FROM portable_profiles p
+                JOIN update_packages u ON u.id=p.active_package_id AND u.deleted_at IS NULL
+                WHERE p.auto_deploy=1 AND p.active_package_id!='' ''').fetchall()
+            vm_ids=([vm_id] if vm_id else [
+                row[0] for row in d.execute('''SELECT e.vm_id FROM guest_enrollment e
+                    JOIN vms v ON v.id=e.vm_id AND v.state='READY'
+                    WHERE e.revoked_at IS NULL AND e.last_seen IS NOT NULL
+                    ORDER BY e.last_seen DESC LIMIT 500''')])
+        result={'queued':[], 'skipped':[], 'policies':len(rows)}
+        for profile in rows:
+            for target in vm_ids:
+                try:
+                    task=self.queue_update(target,profile['active_package_id'],
+                                           options={'auto_deploy':True})
+                    result['queued'].append({'vm_id':target,'task_id':task})
+                except FleetError as exc:
+                    result['skipped'].append({'vm_id':target,'reason':str(exc)[:160]})
+        return result
 
     def tasks(self, vm_id: str | None = None, limit: int = 100, offset: int = 0):
         limit = max(1, min(int(limit), 100)); offset = max(0, int(offset))
@@ -328,7 +371,12 @@ class FleetStore:
                 pkg=d.execute('SELECT * FROM update_packages WHERE id=?',(task['package_id'],)).fetchone()
                 if (pkg and task['kind']=='UPDATE' and
                     re.fullmatch(r'portable-p-[0-9a-f]{20}',pkg['product'])):
-                    break
+                    policy=d.execute('SELECT active_package_id,auto_deploy FROM portable_profiles WHERE id=?',
+                                     (pkg['product'][len('portable-'):],)).fetchone()
+                    configuration=json.loads(task['options_json'] or '{}')
+                    if (policy and policy['active_package_id']==pkg['id'] and
+                            (not configuration.get('auto_deploy') or policy['auto_deploy'])):
+                        break
                 d.execute("UPDATE guest_tasks SET status='FAILED',message=?,completed_at=? WHERE id=? AND status='QUEUED'",
                           ('旧版更新方式已停用，任务未执行；请上传新 ZIP 更新包',now(),task['id']))
                 task=d.execute("SELECT * FROM guest_tasks WHERE vm_id=? AND status='QUEUED' ORDER BY created_at LIMIT 1",(vm_id,)).fetchone()

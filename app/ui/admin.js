@@ -523,11 +523,41 @@ function renderFleet(){
      summary.append(el('strong','software-guest-name',profile.display_name+' · '+p.version),
        el('span','software-guest-brief','目标 C:\\dsh\\'+profile.folder),
        el('span','software-guest-state'+(eligible.length?' is-online':' is-offline'),
-          '可部署 '+eligible.length+' 台'));
+          '可部署 '+eligible.length+' 台'),
+       el('span','software-guest-state'+(profile.auto_deploy?' is-online':' is-offline'),
+          profile.auto_deploy?'自动推送':'手动下发'));
      details.append(summary);
      const body=el('div','software-guest-details');
      body.append(el('p','muted','启动：'+profile.launcher+' · 版本来源：'+
        (p.version_source||'未知')+' · SHA-256：'+p.sha256.slice(0,24)+'…'));
+     const autoRow=el('label','software-auto-control');
+     const auto=document.createElement('input');auto.type='checkbox';
+     auto.checked=Boolean(profile.auto_deploy);
+     auto.setAttribute('aria-label','为 '+profile.display_name+' 自动推送到全部客户机');
+     const autoText=el('span','',profile.auto_deploy?
+       '自动推送已开启：新版本和新上线客户机将自动接收':'自动推送全部客户机（默认关闭）');
+     auto.onchange=async()=>{
+       const enabled=auto.checked;
+       if(enabled&&!confirm('确定启用「'+profile.display_name+'」的自动推送？\n\n'+
+         '当前在线的全部客户机将立即下发当前生效版本；以后上线的客户机也会自动接收。\n'+
+         '同一版本每台只自动尝试一次，失败不会自动重试。\n'+
+         '新上传的版本会取代旧生效版本。')){
+         auto.checked=false;return;
+       }
+       auto.disabled=true;
+       try{
+         const result=await request('/api/fleet/portable/profiles/'+encodeURIComponent(profile.id)+
+           '/auto-deploy','POST',{enabled,confirm_all:enabled});
+         autoText.textContent=enabled?
+           '自动推送已开启：新版本和新上线客户机将自动接收':'自动推送全部客户机（默认关闭）';
+         toast(result.note+(enabled?' 本次已排队 '+result.queued+' 台；跳过 '+result.skipped+' 台。':''));
+         await refresh();
+       }catch(err){
+         auto.checked=!enabled;toast('自动推送设置失败：'+err.message,true);
+       }finally{auto.disabled=false;}
+     };
+     autoRow.append(auto,autoText);
+     body.append(autoRow,el('p','muted','同一软件只保留一个当前生效的 ZIP 发布版本；历史版本仅供审计。'));
      const controls=el('div','software-release-actions');
      const select=el('select');select.setAttribute('aria-label','选择单台或全部客户机');
      select.append(new Option('请选择单台或全部',''));
@@ -656,8 +686,13 @@ window.addEventListener('DOMContentLoaded',async()=>{
      const result=await response.json().catch(()=>({}));
      if(!response.ok)throw Error(result.detail||'上传失败 HTTP '+response.status);
      $('portableUploadForm').reset();
-     toast('已登记 '+result.profile.display_name+' · C:\\dsh\\'+result.profile.folder+
-       ' · '+result.profile.version+'。请在版本库选择单台或全部下发。');
+     const autoInfo=result.auto_deploy||{};
+     toast((result.already_active?'相同 ZIP 已生效，无需重复上传。':'已登记 '+result.profile.display_name+
+       ' · C:\\dsh\\'+result.profile.folder+' · '+result.profile.version+'. ')+
+       (result.profile.auto_deploy?
+         '自动推送开启：已排队 '+(autoInfo.queued_count||0)+' 台，跳过 '+
+           (autoInfo.skipped_count||0)+' 台。':
+         '自动推送关闭，可在软件版本库选择单台或全部下发。'));
      await refresh();
    }catch(error){toast('软件包校验或登记失败：'+error.message,true);}
    finally{button.disabled=false;button.textContent='上传并登记软件更新';}
