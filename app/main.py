@@ -33,6 +33,7 @@ from .agent_update import AgentUpdateManager, build_bootstrap
 from .vmrun import Vmrun, VmrunError
 from .diagnostics import diagnose
 from .safety import assert_powered_off, assert_safe_vm_delete_dir, MAX_SNAPSHOTS, _is_reparse_point
+from .power_state import reported_power_state, suspend_evidence
 from .unattend import provisioning_status, read_secret
 from .admin_auth import AdminAuth, AdminLoginLocked
 from .cleanup import CleanupManager, CleanupError
@@ -383,9 +384,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
             return 'UNKNOWN'
         if str(vmx.resolve()).casefold() in running_paths:
             return 'POWERED_ON'
-        if list(vmx.parent.glob('*.vmss')):
-            return 'SUSPENDED'
-        return 'POWERED_OFF'
+        return reported_power_state(vmx, False)
 
     def running_set() -> set[str] | None:
         try:
@@ -397,6 +396,9 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         result = dict(vm)
         if vm['state'] == 'READY' and Path(vm['vmx_path']).is_file():
             result['power_state'] = runtime_state(Path(vm['vmx_path']), running)
+            evidence=suspend_evidence(Path(vm['vmx_path']))
+            result['power_warning']=evidence.get('warning') or ''
+            result['suspend_reinstall_blocked']=evidence['state'] not in ('clear',)
         else:
             result['power_state'] = 'UNKNOWN'
         return result
