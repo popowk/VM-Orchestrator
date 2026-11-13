@@ -199,6 +199,10 @@ class PortableCatalog:
                                  (profile['folder'],)).fetchone()
             if existing and existing['id'] != profile['id']:
                 raise PortableCatalogError('该目录已登记为不同软件，请先核对目录')
+            other=d.execute('SELECT id FROM portable_profiles WHERE display_name=? COLLATE NOCASE AND id<>? LIMIT 1',
+                            (profile['display_name'],profile['id'])).fetchone()
+            if other:
+                raise PortableCatalogError('该软件名称已绑定另一程序目录，同一软件不可登记多个目录')
             if existing and existing['folder'] != profile['folder']:
                 raise PortableCatalogError('同一软件 ZIP 顶层目录名的大小写必须与已登记目录一致')
             # Never silently switch a registered launch path: explicit review.
