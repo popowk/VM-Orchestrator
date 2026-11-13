@@ -52,7 +52,9 @@ class PresetCommandLengthTests(unittest.TestCase):
                 stored=self.self_service.save(self.preset(shell,'A'*limit))
                 self.assertEqual(len(stored['command']),limit)
                 self.assert_remote_accepts_saved(stored)
-                with self.assertRaisesRegex(ValueError,'最多'):
+                # CMD overage is rejected by SelfServiceStore; the absolute
+                # PowerShell overage is rejected earlier by Pydantic.
+                with self.assertRaises(ValueError):
                     self.self_service.save(self.preset(shell,'A'*(limit+1)))
 
     def test_pydantic_absolute_cap_matches_remote_powershell(self):
