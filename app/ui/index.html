@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.58"></script>
+<script src="/ui/app-route-recover.js?v=1.4.59"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.58">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.59">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.58" defer></script>
+<script src="/ui/admin.js?v=1.4.59" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -321,7 +321,7 @@
                         <div class="form-grid">
                           <label>命令环境<select id="selfShell"><option value="powershell">PowerShell</option><option value="cmd">CMD</option></select></label>
                           <label>运行方式<select id="selfRunMode"><option value="wait">等待结果</option><option value="detached">后台启动</option><option value="interactive">已登录用户桌面</option></select></label>
-                          <label class="wide">管理员预设命令<textarea id="selfCommand" rows="3" maxlength="2000" spellcheck="false" placeholder="客户无法查看或修改此命令"></textarea></label>
+                          <label class="wide">管理员预设命令<textarea id="selfCommand" rows="8" maxlength="12000" spellcheck="false" placeholder="客户无法查看或修改此命令"></textarea><small id="selfCommandCount" class="muted" aria-live="polite">0 / 12,000 字符（PowerShell）</small><small class="muted">与远程运维一致：CMD 最多 8,000 字符，PowerShell 最多 12,000 字符。超过 2,000 字符的命令需要 Guest Agent v2.0.21 或更新版本。</small></label>
                           <label>工作目录（可选）<input id="selfCwd" placeholder="例如 C:\dsh\SnowLuma"></label>
                           <label>最长等待（秒）<input id="selfTimeout" type="number" min="5" max="300" value="60"></label>
                         </div>

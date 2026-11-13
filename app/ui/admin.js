@@ -898,7 +898,16 @@ window.VMOSelfService=(()=>{
  const $=id=>document.getElementById(id);
  let catalog=[];
  let settingsLoaded=false;
- function kindChange(){const isUpdate=$('selfKind').value==='SOFTWARE_UPDATE';$('selfCommandFields').hidden=isUpdate;$('selfUpdateFields').hidden=!isUpdate;}
+ const commandLimit=()=>$('selfShell').value==='cmd'?8000:12000;
+ function commandCount(){
+   const input=$('selfCommand'),limit=commandLimit(),count=input.value.length;
+   input.maxLength=limit;
+   const label=$('selfCommandCount');
+   label.textContent=count.toLocaleString('zh-CN')+' / '+limit.toLocaleString('zh-CN')+
+     ' 字符（'+($('selfShell').value==='cmd'?'CMD':'PowerShell')+'）';
+   label.classList.toggle('remote-count-error',count>limit);
+ }
+ function kindChange(){const isUpdate=$('selfKind').value==='SOFTWARE_UPDATE';$('selfCommandFields').hidden=isUpdate;$('selfUpdateFields').hidden=!isUpdate;commandCount();}
  function reset(){ $('selfActionForm').reset();$('selfEditId').value='';$('selfEnabled').checked=false;kindChange();$('selfEditorMode').textContent='新建一项客户可执行操作';$('selfSave').textContent='保存操作';render();}
  function prepare(){
    const product=$('selfProduct'),old=product.value;
@@ -999,6 +1008,9 @@ window.VMOSelfService=(()=>{
      try{await request('/api/business/admin/customer-settings/services/'+encodeURIComponent(ref),'PUT',quotaValues('customerLimit'));toast('客户额度已更新');$('customerLimitLoad').click();}catch(ex){toast(ex.message,true);}
    };
    $('selfKind').onchange=kindChange;
+   $('selfShell').onchange=commandCount;
+   $('selfCommand').oninput=commandCount;
+   commandCount();
    $('selfActionSearch').oninput=render;
    $('selfActionFilter').onchange=render;
    $('selfRefresh').onclick=()=>refresh();
@@ -1012,6 +1024,10 @@ window.VMOSelfService=(()=>{
        timeout_seconds:Number($('selfTimeout').value||60),package_id:isUpdate?$('selfPackage').value:'',
        install_dir:isUpdate?$('selfInstallDir').value.trim():'',sort_order:Number($('selfSortOrder').value||0)};
      if(!body.product_ref)return toast('请选择思博商品',true);
+     if(!isUpdate && (!body.command.length || body.command.length>commandLimit()))
+       return toast('命令长度无效：'+(body.shell==='cmd'?'CMD 最多 8,000':'PowerShell 最多 12,000')+' 字符',true);
+     if(!isUpdate && body.command.includes(String.fromCharCode(0)))
+       return toast('命令不能包含空字符',true);
      if(body.enabled&&!confirm('确认允许此商品的客户自主触发「'+body.label+'」？命令将按已配置身份执行。'))return;
      try{await request('/api/business/admin/self-actions','POST',body);toast('自助操作已保存');reset();await refresh();}
      catch(ex){toast(ex.message,true);}
