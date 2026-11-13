@@ -253,3 +253,8 @@
 .remote-self-controls button{min-height:42px;white-space:nowrap}
 .remote-self-description{padding-top:6px;margin:0;overflow-wrap:anywhere}
 @media(max-width:580px){.remote-self-controls{grid-template-columns:1fr}.remote-self-controls button{width:100%}}
+
+/* v1.4.58: persistent fleet auto-push and single effective ZIP release */
+.software-auto-control{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);font-weight:650;font-size:13px;cursor:pointer;line-height:1.5}
+.software-auto-control input{flex:none;width:18px;height:18px;accent-color:#2860d4}
+.software-auto-control span{min-width:0;overflow-wrap:anywhere}
