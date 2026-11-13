@@ -246,3 +246,10 @@
 .software-release-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .software-release-actions select{flex:1 1 190px;min-width:150px;max-width:300px;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
 @media(max-width:680px){.software-guest-version{width:100%;margin-left:22px}.software-inventory-tools input{max-width:none}.software-release-actions select{max-width:none;flex-basis:100%}.software-guest-summary{gap:7px 9px}}
+
+/* v1.4.57 remote operations: customer-style select and execute. */
+.remote-self-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:10px}
+.remote-self-controls select{display:block;min-width:0;width:100%;padding:10px 12px;min-height:42px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)}
+.remote-self-controls button{min-height:42px;white-space:nowrap}
+.remote-self-description{padding-top:6px;margin:0;overflow-wrap:anywhere}
+@media(max-width:580px){.remote-self-controls{grid-template-columns:1fr}.remote-self-controls button{width:100%}}
