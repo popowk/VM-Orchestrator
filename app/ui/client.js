@@ -267,7 +267,11 @@ async function refreshLive(){
  }catch(e){show('状态刷新失败：'+e.message,true);}
 }
 async function screen(){const status=$('screenStatus');status.textContent='正在抓取截图…';try{const res=await fetch('/client/api/screen.png',{credentials:'same-origin',cache:'no-store'});if(!res.ok){let p={};try{p=await res.json();}catch{}throw Error(p.detail||('HTTP '+res.status));}
- const url=URL.createObjectURL(await res.blob());const img=$('screenImage');const old=img.dataset.url;img.src=url;img.hidden=false;img.dataset.url=url;if(old)URL.revokeObjectURL(old);status.textContent='截图时间：'+bjtTime(Date.now());}
+ const blob=await res.blob();const url=URL.createObjectURL(blob);
+ const img=$('screenImage'),empty=$('screenEmpty'),old=img.dataset.url;
+ img.onload=()=>{empty.hidden=true;empty.style.display='none';img.hidden=false;if(old)URL.revokeObjectURL(old);};
+ img.onerror=()=>{URL.revokeObjectURL(url);status.textContent='截图图片无法解码，请重试';};
+ img.src=url;img.dataset.url=url;status.textContent='截图时间：'+bjtTime(Date.now());}
  catch(e){status.textContent='截图失败：'+e.message+'（可能尚未启用本机 VNC 截图）';}}
 window.addEventListener('DOMContentLoaded',()=>{
  $('refresh').onclick=refresh; $('selfActionExecute').onclick=()=>{const a=selfActionCatalog.find(x=>x.id===$('selfActionSelect').value);if(a)executeSelfAction(a);}; $('customerAnnouncementAck').onclick=acknowledgeCustomerAnnouncement;$('screenRefresh').onclick=screen;
