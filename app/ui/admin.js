@@ -1215,7 +1215,7 @@ window.VMOSelfService=(()=>{
    return {items,total};
  }
  function renderOps(paged, self){
-   page=paged.page;
+   // The controller holds the page; loadRecentOps fetches sufficient rows.
    const history=self?.executions||[];
    const commands=new Map(history.filter(x=>x.action_kind==='COMMAND'&&x.operation_id).map(x=>[x.operation_id,x]));
    const updates=history.filter(x=>x.action_kind==='SOFTWARE_UPDATE');
@@ -1225,7 +1225,7 @@ window.VMOSelfService=(()=>{
    by('remotePageLabel').textContent='第 '+page+' / '+pages+' 页 · '+total+' 条（每页5条）';
    by('remotePrev').disabled=page<=1;by('remoteNext').disabled=page>=pages;
    const ops=paged.items||[];
-   const fingerprint=JSON.stringify([ops.map(o=>[o.id,o.state,o.attempt_count,o.completed_at,o.last_error,o.result]),
+   const fingerprint=JSON.stringify([page,ops.map(o=>[o.id,o.state,o.attempt_count,o.completed_at,o.last_error,o.result]),
      updates.map(x=>[x.request_id,x.status,x.updated_at,x.output_text]),history.map(x=>[x.operation_id,x.label])]);
    if(fingerprint===opsFingerprint)return;opsFingerprint=fingerprint;
    const target=by('remoteOps');const opened=new Set([...target.querySelectorAll('details[open]')].map(x=>x.dataset.id));
