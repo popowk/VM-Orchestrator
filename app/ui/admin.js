@@ -548,6 +548,8 @@ function renderFleet(){
        try{
          const result=await request('/api/fleet/portable/profiles/'+encodeURIComponent(profile.id)+
            '/auto-deploy','POST',{enabled,confirm_all:enabled});
+         autoText.textContent=enabled?
+           '自动推送已开启：新版本和新上线客户机将自动接收':'自动推送全部客户机（默认关闭）';
          toast(result.note+(enabled?' 本次已排队 '+result.queued+' 台；跳过 '+result.skipped+' 台。':''));
          await refresh();
        }catch(err){
@@ -684,8 +686,13 @@ window.addEventListener('DOMContentLoaded',async()=>{
      const result=await response.json().catch(()=>({}));
      if(!response.ok)throw Error(result.detail||'上传失败 HTTP '+response.status);
      $('portableUploadForm').reset();
-     toast('已登记 '+result.profile.display_name+' · C:\\dsh\\'+result.profile.folder+
-       ' · '+result.profile.version+'。请在版本库选择单台或全部下发。');
+     const autoInfo=result.auto_deploy||{};
+     toast((result.already_active?'相同 ZIP 已生效，无需重复上传。':'已登记 '+result.profile.display_name+
+       ' · C:\\dsh\\'+result.profile.folder+' · '+result.profile.version+'. ')+
+       (result.profile.auto_deploy?
+         '自动推送开启：已排队 '+(autoInfo.queued_count||0)+' 台，跳过 '+
+           (autoInfo.skipped_count||0)+' 台。':
+         '自动推送关闭，可在软件版本库选择单台或全部下发。'));
      await refresh();
    }catch(error){toast('软件包校验或登记失败：'+error.message,true);}
    finally{button.disabled=false;button.textContent='上传并登记软件更新';}
