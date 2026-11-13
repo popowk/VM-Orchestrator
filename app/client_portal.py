@@ -495,6 +495,8 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
             'status': s['status'], 'expires_at':s.get('expires_at'),
             'expiry_schedule':db.expiry_schedule(s),
             'vm_state': v['state'], 'power_state': data['power_state'],
+            'power_warning': data.get('power_warning', ''),
+            'suspend_reinstall_blocked': bool(data.get('suspend_reinstall_blocked',False)),
             'guest_registered': bool(g), 'guest_last_seen': g['last_seen'] if g else None,
             'guest_ipv4_addresses': (g.get('reported') or {}).get('ipv4_addresses', []) if g else [],
             'guest_install_modes': (g.get('reported') or {}).get('install_modes', {}) if g else {},
@@ -631,6 +633,7 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
     @app.get('/client/api/self-actions/history', include_in_schema=False)
     def client_self_action_history(s=Depends(client_service)):
         records=self_actions.reconcile(s['service_ref'],s['vm_id'])
+        records=records[:2]  # Return only two execution records to customer browser
         # Return bounded, redacted command output for the tenant's own VM only.
         history=[]
         for row in records:
@@ -644,6 +647,27 @@ def install_client_portal(app, *, settings, store, fleet, vmrun, runner, templat
                 op=remote.get(row['operation_id'])
                 if op and op.get('vm_id')==s['vm_id']:
                     visible.update(customer_command_result(op.get('result'),visible['status']))
+            if row['action_kind']=='SOFTWARE_UPDATE' and row.get('operation_id'):
+                # Share only bounded, redacted agent-reported task results with
+                # the current tenant, never the full update task or local paths.
+                with self_actions.db() as connection:
+                    task=connection.execute(
+                        'SELECT status,message FROM guest_tasks WHERE id=? AND vm_id=?',
+                        (row['operation_id'],s['vm_id'])).fetchone()
+                if task:
+                    import json as _json
+                    from .client_output import safe_excerpt
+                    raw=str(task['message'] or '')
+                    try:
+                        data=_json.loads(raw)
+                        if isinstance(data,dict):
+                            raw=str(data.get('note') or data.get('error') or
+                                    data.get('message') or '')
+                    except (ValueError,TypeError):
+                        pass
+                    visible['output_text']=safe_excerpt(raw) or (
+                        '软件包已校验并部署完成' if task['status']=='SUCCEEDED'
+                        else '软件部署状态待核查，详见管理员任务')
             history.append(visible)
         blocking=self_actions.blocking_execution(s['service_ref'],s['vm_id'])
         # The blocker is independent from the five most recent entries.
