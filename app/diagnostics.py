@@ -10,6 +10,7 @@ import ctypes
 import os
 from pathlib import Path
 from .vmrun import Vmrun, VmrunError
+from .power_state import suspend_evidence, reported_power_state
 
 
 def exclusive_open_possible(path: Path) -> bool:
@@ -41,18 +42,19 @@ def diagnose(vmx: Path, vmrun: Vmrun, *, probe=exclusive_open_possible) -> dict:
         running = False
         power_verified = False
     locks = sorted(x.name for x in vmx.parent.glob('*.lck'))
-    suspend = sorted(x.name for x in vmx.parent.glob('*.vmss'))
-    # No exclusive-open probe is attempted for suspended/running/unknown state.
-    # Distinguish "skipped for safety" from a real file lock failure.
-    probe_skipped = not power_verified or bool(running) or bool(suspend)
-    exclusive = bool(probe(vmx)) if not probe_skipped else False
-    power = 'UNKNOWN' if not power_verified else ('POWERED_ON' if running else ('SUSPENDED' if suspend else 'POWERED_OFF'))
+    evidence=suspend_evidence(vmx)
+    suspend=evidence['suspend_files']
+    probe_skipped=not power_verified or bool(running) or bool(suspend) or evidence['state']!='clear'
+    exclusive=bool(probe(vmx)) if not probe_skipped else False
+    power=reported_power_state(vmx, running if power_verified else None)
     if not power_verified:
         cause = 'VMware vmrun 无法确认电源状态；禁止修改 VMX'
     elif running:
         cause = '虚拟机仍在运行；关机后才能修改截图配置'
-    elif suspend:
-        cause = 'VMware 未报告正在运行，但发现 .vmss 保存的挂起内存；应按挂起处理。请点击恢复运行，再在 Windows 内正常关机后重新诊断；禁止手工删除 .vmss 或 .lck'
+    elif evidence['state']=='suspended':
+        cause='VMX 仍引用真实挂起文件。请恢复运行、正常关机，禁止手动删除挂起内存或锁。'
+    elif evidence['state'] in ('residual','unverified','unknown'):
+        cause=evidence.get('warning') or '挂起状态无法核实，禁止直接重装'
     elif not exclusive:
         cause = 'VMX 文件当前可能被 VMware 或其他进程占用；请关闭该虚拟机的设置窗口后重试'
     elif locks:
@@ -62,7 +64,8 @@ def diagnose(vmx: Path, vmrun: Vmrun, *, probe=exclusive_open_possible) -> dict:
     return {
         'vmx_exists': vmx.is_file(), 'power_state': power,
         'vmrun_confirmed': power_verified, 'lock_markers': locks,
-        'suspend_files': suspend, 'vmx_exclusive_open': exclusive,
+        'suspend_files': suspend, 'checkpoint_vmstate': evidence['checkpoint'],
+        'power_warning': evidence['warning'], 'vmx_exclusive_open': exclusive,
         'vmx_probe_skipped': probe_skipped,
         'offline_vmx_edit_possible': power == 'POWERED_OFF' and exclusive,
         'reason': cause,
