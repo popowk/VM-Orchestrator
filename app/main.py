@@ -879,6 +879,25 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     def portable_program_profiles():
         return portable_catalog.all()
 
+    class AutoDeployConfig(BaseModel):
+        enabled: bool
+        confirm_all: bool = False
+
+    @app.post('/api/fleet/portable/profiles/{profile_id}/auto-deploy',
+              dependencies=[Depends(authorized)])
+    def set_portable_auto_deploy(profile_id: str, payload: AutoDeployConfig):
+        if payload.enabled and not payload.confirm_all:
+            raise HTTPException(422,'启用自动推送需要明确确认全部客户机范围')
+        try:
+            profile=portable_catalog.set_auto_deploy(profile_id,payload.enabled)
+        except PortableCatalogError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        result=fleet.reconcile_auto_deploy() if payload.enabled else {'queued':[],'skipped':[]}
+        return {'profile':profile,'queued':len(result['queued']),
+                'skipped':len(result['skipped']),
+                'note':('自动推送已开启：当前在线 Guest 将尝试一次；新上线客户机自动接收。'
+                        if payload.enabled else '自动推送已关闭，尚未领取的自动任务已取消。')}
+
     @app.post('/api/fleet/portable/packages', dependencies=[Depends(authorized)], status_code=201)
     async def upload_portable_package(
             request: Request, name: str, launcher: str,
@@ -915,7 +934,9 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
                               checksum.hexdigest(),size,
                               'approved-portable-update.zip',package_id)
             portable_catalog.record_package(package_id,profile)
-            return {'package':fleet.package(package_id),'profile':profile,
+            auto=fleet.reconcile_auto_deploy() if portable_catalog.get(profile['id'])['auto_deploy'] else {'queued':[], 'skipped':[]}
+            return {'package':fleet.package(package_id),'profile':portable_catalog.get(profile['id']),
+                    'auto_deploy':{'queued_count':len(auto['queued']),'skipped_count':len(auto['skipped'])},
                     'note':('版本已经通过 ZIP 内容识别'
                             if profile['version_source'].startswith('zip:') else
                             '版本来自手动填写' if profile['version_source']=='manual' else
@@ -931,8 +952,10 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     def packages():
         # Never offer discontinued adapters for new installs. Historical records
         # remain persisted for auditing and older task result reconciliation.
+        active={p['active_package_id'] for p in portable_catalog.all()
+                if p.get('active_package_id')}
         result=[item for item in fleet.packages()
-                if item['product'].startswith('portable-p-')]
+                if item['product'].startswith('portable-p-') and item['id'] in active]
         for item in result:
             item.update(portable_catalog.release_metadata(item['id']))
         return result
