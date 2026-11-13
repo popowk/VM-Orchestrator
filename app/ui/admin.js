@@ -193,7 +193,7 @@ function vmCard(vm){let card=el('div','vm-card'),head=el('div','vm-title'),name=
   actions.append(btn('强制关机','danger',()=>hardStop(vm),vm.power_state!=='POWERED_ON'));
   actions.append(btn('状态诊断','ghost',()=>openDiagnostics(vm)));
   actions.append(btn('初始化信息','ghost',()=>openProvision(vm)));
-  actions.append(btn('重装系统','warn',()=>openReinstall(vm),vm.power_state!=='POWERED_OFF'));
+  actions.append(btn('重装系统','warn',()=>openReinstall(vm),vm.power_state!=='POWERED_OFF'||vm.suspend_reinstall_blocked));
   actions.append(btn('软件更新','ghost',()=>{navigate('updates');},false));
  }
  if(vm.state==='ERROR')actions.append(btn('身份修复','warn',()=>repair(vm)));
@@ -403,7 +403,7 @@ async function openDetail(id) {
   if(!$('vmDialog').open)$('vmDialog').showModal();
 }
 function openReinstall(vm){
-  if(vm.state!=='READY'||vm.power_state!=='POWERED_OFF'){toast('请先完全关机并确认没有任务',true);return;}
+  if(vm.state!=='READY'||vm.power_state!=='POWERED_OFF'||vm.suspend_reinstall_blocked){toast('尚未满足安全重装条件：请先确认关机及挂起文件状态',true);return;}
   state.reinstallVm=vm;
   $('reinstallTarget').textContent=`目标：${vm.name} · ${vm.customer_ref||'无客户标签'}`;
   $('reinstallTypedName').value='';$('reinstallEraseConfirm').checked=false;$('reinstallBackupConfirm').checked=false;
