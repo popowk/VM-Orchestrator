@@ -277,13 +277,12 @@ class FleetStore:
                 parts=tuple(int(x) for x in raw_version.split('.'))
             except (AttributeError,ValueError,TypeError):
                 parts=()
-            if len(parts)!=3 or parts<(2,0,25):
-                raise FleetError('此客户机需要 Guest Agent v2.0.25 或更新版本')
-            installed=report.get('portable_software',{})
-            if not isinstance(installed,dict) or not any(
-                   name.casefold()==profile['folder'].casefold() and isinstance(value,dict)
-                   for name,value in installed.items()):
-                raise FleetError('客户机尚未上报 C:\\dsh\\'+profile['folder']+' 软件目录')
+            if len(parts)!=3 or parts<(2,0,27):
+                raise FleetError('此客户机需要 Guest Agent v2.0.27 或更新版本')
+            # The Guest inspects its actual disk at execution time:
+            # missing C:\\dsh\\<folder> is a FIRST INSTALL, not an error.
+            # Never rely on heartbeat inventory as installation authorization.
+            options['portable']['deploy_mode']='install_or_update'
             if not agent['last_seen'] or (datetime.now(timezone.utc)-datetime.fromisoformat(agent['last_seen'])).total_seconds() > 600:
                 raise FleetError('Guest Agent 心跳已超出 10 分钟；请先恢复自动心跳')
             id_ = str(uuid.uuid4())
