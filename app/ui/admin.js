@@ -1176,45 +1176,79 @@ window.VMOSelfService=(()=>{
  }
  function renderSelfActions(info){
    const rows=info?.items||[];
-   const key=JSON.stringify([vm,connection,selfSubmitting,info?.message,rows.map(a=>[a.id,a.label,a.description,a.kind,a.updated_at])]);
+   const key=JSON.stringify([vm,connection,selfSubmitting,info?.message,
+      rows.map(a=>[a.id,a.label,a.description,a.kind,a.updated_at])]);
    if(key===selfFingerprint)return;
    selfFingerprint=key;
    const status=by('remoteSelfActionsStatus'),target=by('remoteSelfActions');
-   status.textContent=info?.message||'该虚拟机没有可用的客户自助操作';
+   const before=target.querySelector('select')?.value||'';
+   status.textContent=info?.message||'当前虚拟机没有已授权的自助操作';
    target.replaceChildren();
-   for(const item of rows){
-     const row=txt('div','','remote-app-row'),description=txt('div','');
-     description.append(txt('strong',item.label));
-     if(item.description)description.append(txt('small',item.description));
-     description.append(txt('small',item.kind==='SOFTWARE_UPDATE'?'已审核的软件更新包':'管理员预设命令；命令内容不会暴露给客户'));
-     const button=txt('button','执行操作','btn ghost small');button.type='button';
-     button.disabled=!connection||Boolean(selfSubmitting);
-     button.onclick=async()=>{
-       if(!connection)return alert('Guest WSS 未连接，无法执行');
-       if(selfSubmitting)return;
-       if(!confirm('确认对当前客户虚拟机执行「'+item.label+'」？\n\n将复用客户自助操作配置、去重和审计机制；执行结果统一显示在最近执行记录里。'))return;
-       const requestVm=vm;
-       selfSubmitting=item.id;selfFingerprint='';button.disabled=true;
-       status.textContent='正在下发「'+item.label+'」…';
-       try{
-         const result=await api('/api/vms/'+encodeURIComponent(requestVm)+
-           '/remote/self-actions/'+encodeURIComponent(item.id)+'/execute','POST',
-           {request_id:generateRequestId(),confirm:true});
-         status.textContent='操作已提交：'+result.request_id+' · 结果将在「最近执行记录」更新';
-       }catch(err){status.textContent='操作未下发：'+err.message;alert(status.textContent);}
-       finally{selfSubmitting='';selfFingerprint='';await refresh();}
-     };
-     row.append(description,button);target.append(row);
+   if(!rows.length)return;
+   const bar=txt('div','','remote-self-controls');
+   const select=document.createElement('select');
+   select.setAttribute('aria-label','选择客户自助操作');
+   select.append(new Option('请选择自助操作',''));
+   rows.forEach(item=>select.add(new Option(item.label+
+      (item.kind==='SOFTWARE_UPDATE'?' · 软件更新':''),item.id)));
+   select.value=rows.some(x=>x.id===before)?before:rows[0].id;
+   const button=txt('button','执行操作','btn primary small');
+   button.type='button';
+   const help=txt('p','','muted remote-self-description');
+   function selection(){
+     const selected=rows.find(x=>x.id===select.value);
+     help.textContent=selected?.description||
+       (selected?'管理员已授权的快捷操作':'请选择操作');
+     button.disabled=!connection||!selected||Boolean(selfSubmitting);
    }
+   select.onchange=selection;
+   button.onclick=async()=>{
+     const selected=rows.find(x=>x.id===select.value);
+     if(!connection)return alert('Guest WSS 未连接，无法执行');
+     if(!selected||selfSubmitting)return;
+     if(!confirm('确认对当前客户虚拟机执行「'+selected.label+'」？\n\n'+
+       (selected.description||'执行后无法撤销，请勿重复提交。')+
+       '\n执行结果将在「最近执行记录」显示。'))return;
+     const requestVm=vm;
+     selfSubmitting=selected.id;selfFingerprint='';button.disabled=true;
+     status.textContent='正在下发「'+selected.label+'」…';
+     try{
+       const result=await api('/api/vms/'+encodeURIComponent(requestVm)+
+         '/remote/self-actions/'+encodeURIComponent(selected.id)+'/execute','POST',
+         {request_id:generateRequestId(),confirm:true});
+       status.textContent='已提交 '+result.request_id+'，请查看最近执行记录';
+     }catch(err){status.textContent='操作未下发：'+err.message;alert(status.textContent);}
+     finally{selfSubmitting='';selfFingerprint='';await refresh();}
+   };
+   bar.append(select,button);
+   target.append(bar,help);
+   selection();
+ }
+ async function loadRecentOps(vmId,requestedPage){
+   const needed=Math.max(5,requestedPage*5);
+   let count=0,total=0;const items=[];
+   while(count<needed){
+     const size=Math.min(100,needed-count);
+     const batch=await api('/api/vms/'+encodeURIComponent(vmId)+
+       '/remote/operations?paged=true&page='+Math.floor(count/size+1)+
+       '&page_size='+size);
+     total=batch.total;
+     items.push(...(batch.items||[]));
+     count+=size;
+     if(items.length>=total||!(batch.items||[]).length)break;
+   }
+   return {items,total};
  }
  function renderOps(paged, self){
    page=paged.page;
    const history=self?.executions||[];
    const commands=new Map(history.filter(x=>x.action_kind==='COMMAND'&&x.operation_id).map(x=>[x.operation_id,x]));
-   const updates=page===1?history.filter(x=>x.action_kind==='SOFTWARE_UPDATE'):[];
-   by('remotePageLabel').textContent='命令第 '+page+' / '+paged.pages+' 页 · '+paged.total+
-      ' 条'+(updates.length?' · 自助更新最近 '+updates.length+' 条':'');
-   by('remotePrev').disabled=page<=1;by('remoteNext').disabled=page>=paged.pages;
+   const updates=history.filter(x=>x.action_kind==='SOFTWARE_UPDATE');
+   const total=(paged.total||0)+updates.length;
+   const pages=Math.max(1,Math.ceil(total/5));
+   page=Math.max(1,Math.min(page,pages));
+   by('remotePageLabel').textContent='第 '+page+' / '+pages+' 页 · '+total+' 条（每页5条）';
+   by('remotePrev').disabled=page<=1;by('remoteNext').disabled=page>=pages;
    const ops=paged.items||[];
    const fingerprint=JSON.stringify([ops.map(o=>[o.id,o.state,o.attempt_count,o.completed_at,o.last_error,o.result]),
      updates.map(x=>[x.request_id,x.status,x.updated_at,x.output_text]),history.map(x=>[x.operation_id,x.label])]);
@@ -1224,8 +1258,9 @@ window.VMOSelfService=(()=>{
    const merged=[...ops.map(x=>({type:'op',time:x.created_at,entry:x})),
      ...updates.map(x=>({type:'self-update',time:x.created_at,entry:x}))];
    merged.sort((a,b)=>Date.parse(b.time||'')-Date.parse(a.time||''));
-   if(!merged.length){target.append(txt('p','当前客户机暂无执行记录','muted'));return;}
-   for(const item of merged){
+   const visible=merged.slice((page-1)*5,page*5);
+   if(!visible.length){target.append(txt('p','当前页暂无执行记录','muted'));return;}
+   for(const item of visible){
      const row=txt('div','','remote-op-card'),head=txt('div','','remote-op-header');
      if(item.type==='self-update'){
        const task=item.entry;
@@ -1286,7 +1321,7 @@ window.VMOSelfService=(()=>{
      const requestVm=vm;
      const [presence,ops,apps,upgrade,self]=await Promise.all([
         api('/api/vms/'+encodeURIComponent(vm)+'/remote/presence'),
-        api('/api/vms/'+encodeURIComponent(vm)+'/remote/operations?paged=true&page='+page+'&page_size=15'),
+        loadRecentOps(vm,page),
         api('/api/vms/'+encodeURIComponent(vm)+'/remote/apps'),
         api('/api/vms/'+encodeURIComponent(vm)+'/agent-upgrade'),
          api('/api/vms/'+encodeURIComponent(vm)+'/remote/self-actions').catch(err=>({items:[],executions:[],message:'自助操作读取失败：'+err.message}))]);
