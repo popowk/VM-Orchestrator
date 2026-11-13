@@ -1113,6 +1113,46 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         return {'task_id':task_id,'vm_id':vm_id,'status':'QUEUED',
                 'note':'Guest 将按登记的程序目录执行备份替换，并保留更新前的运行状态。'}
 
+    class PortableDeployRequest(BaseModel):
+        package_id: str
+        scope: Literal['one','all']
+        vm_id: str | None = None
+        confirm: bool = False
+        confirm_all: bool = False
+
+    @app.post('/api/fleet/portable/deploy', dependencies=[Depends(authorized)], status_code=202)
+    def portable_deploy(payload: PortableDeployRequest):
+        """One operator action, one or all READY VMs; missing program is first install.
+
+        Each Guest independently re-verifies the package and actual directory.
+        Stale/offline Agents are skipped, not silently queued for surprise
+        execution after a future unrelated boot.
+        """
+        if not payload.confirm or (payload.scope=='all' and not payload.confirm_all):
+            raise HTTPException(422,'请明确确认部署范围和运行状态保留规则')
+        pkg=fleet.package(payload.package_id)
+        if not pkg or not pkg['product'].startswith('portable-p-'):
+            raise HTTPException(422,'只能部署已审核的便携软件 ZIP 包')
+        if payload.scope=='one':
+            if not payload.vm_id:
+                raise HTTPException(422,'必须选择目标客户机')
+            targets=[payload.vm_id]
+        else:
+            targets=[v['id'] for v in store.list_vms() if v['state']=='READY']
+            if len(targets)>500:
+                raise HTTPException(409,'目标超过500台，请缩小范围后分批部署')
+        queued=[]
+        skipped=[]
+        for vm_id in targets:
+            try:
+                task=fleet.queue_update(vm_id,payload.package_id,options={})
+                queued.append({'vm_id':vm_id,'task_id':task})
+            except FleetError as exc:
+                skipped.append({'vm_id':vm_id,'reason':str(exc)[:160]})
+        return {'scope':payload.scope,'total':len(targets),
+                'queued':queued,'skipped':skipped,
+                'note':'已安装则更新并恢复之前运行状态；未安装则首次安装并保持关闭。离线/版本不足/忙碌客户机不下发。'}
+
     @app.get('/api/jobs', dependencies=[Depends(authorized)])
     def list_jobs(vm_id: str | None = Query(default=None), page: int = Query(default=1, ge=1, le=100000),
                   page_size: int = Query(default=20, ge=1, le=100), paged: bool = False):
