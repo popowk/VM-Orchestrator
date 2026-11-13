@@ -5,6 +5,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, ConfigDict, Field
+from .remote_ops import MAX_COMMAND_CMD, MAX_COMMAND_POWERSHELL, MAX_COMMAND_BYTES
 
 PRODUCT_RE=re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$')
 
@@ -20,7 +21,7 @@ class ActionInput(BaseModel):
     kind:str
     enabled:bool=False
     shell:str='powershell'
-    command:str=''
+    command:str=Field(default='',max_length=MAX_COMMAND_POWERSHELL)
     run_mode:str='wait'
     cwd:str=''
     timeout_seconds:int=Field(default=60,ge=5,le=300)
@@ -95,8 +96,18 @@ class SelfServiceStore:
         if p.kind=='COMMAND':
             if p.shell not in ('cmd','powershell') or p.run_mode not in ('wait','detached','interactive'):
                 raise ValueError('Invalid command shell or mode')
-            if not 1<=len(p.command)<=2000 or '\x00' in p.command or p.package_id or p.install_dir:
-                raise ValueError('Command operations require only a valid administrator-defined command')
+            limit=MAX_COMMAND_CMD if p.shell=='cmd' else MAX_COMMAND_POWERSHELL
+            if (not 1<=len(p.command)<=limit or '\x00' in p.command
+                    or p.package_id or p.install_dir):
+                raise ValueError(f'预设命令无效：CMD 最多 {MAX_COMMAND_CMD} 字符，PowerShell 最多 {MAX_COMMAND_POWERSHELL} 字符')
+            # Match the remote COMMAND transport cap at save time as well,
+            # so a preset cannot be accepted but rejected at dispatch.
+            params={'shell':p.shell,'command':p.command,'privilege':'system',
+                    'confirmed':True,'run_mode':p.run_mode,'cwd':p.cwd,
+                    'timeout_seconds':p.timeout_seconds}
+            encoded=json.dumps(params,ensure_ascii=False,separators=(',',':'))
+            if len(encoded.encode('utf-8'))>MAX_COMMAND_BYTES:
+                raise ValueError(f'预设命令超过远程运维传输限制（{MAX_COMMAND_BYTES} UTF-8 字节）')
         elif not p.package_id or p.command or p.cwd:
             raise ValueError('Update operations require a pinned package and no command or cwd')
         id_=p.id or str(uuid.uuid4());now=utcnow()
