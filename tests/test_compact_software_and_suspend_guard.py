@@ -23,7 +23,7 @@ class SuspendedVmGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
             vmx=root/'001.vmx'
-            vmx.write_text('config.version = "8"\n', encoding='utf-8')
+            vmx.write_text('config.version = "8"\ncheckpoint.vmState = "001-2660ec3f.vmss"\n', encoding='utf-8')
             (root/'001-2660ec3f.vmss').write_bytes(b'saved suspended memory')
             (root/'001.vmx.lck').mkdir()
             def probe_must_not_run(_):

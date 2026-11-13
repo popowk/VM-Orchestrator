@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>我的 Windows · VM Orchestrator</title><link rel="stylesheet" href="/ui/client.css?v=1.4.53"><script src="/ui/client.js?v=1.4.53" defer></script></head>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>我的 Windows · VM Orchestrator</title><link rel="stylesheet" href="/ui/client.css?v=1.4.57"><script src="/ui/client.js?v=1.4.57" defer></script></head>
 <body><div class="wrapper">
 <header><div class="logo">V</div><div><h1>我的 Windows 云主机</h1></div><div class="spacer"></div><button id="refresh" class="light">刷新状态</button><button id="logout" class="light">退出</button></header>
 <div id="notice" class="notice" role="status"></div><div id="customerAnnouncementModal" class="vmo-announcement-overlay" hidden>
@@ -13,9 +13,35 @@
 </div>
 <main id="main" hidden>
 <section class="summary"><div><div class="muted">主机</div><h2 id="vmName">—</h2><p id="serviceName">—</p><p id="serviceExpiry" class="muted">到期时间：—</p><p id="vmIp" class="muted">客户机 IP 尚未上报</p></div><div class="facts"><div><small>运行状态</small><strong id="power">—</strong></div><div><small>Windows 初始化</small><strong id="vmstate">—</strong></div><div><small>Guest Agent</small><strong id="guest">—</strong></div></div></section>
-<div class="cols"><section class="panel screen-panel"><div class="head"><h3>实时屏幕截图</h3><button id="screenRefresh" class="light">刷新画面</button></div><div class="monitor"><img id="screenImage" alt="当前 Windows 虚拟机屏幕" hidden><div id="screenEmpty">点击刷新，获取一次屏幕截图。此处不提供远程鼠标键盘控制。</div></div><small id="screenStatus" class="muted"></small></section>
-<section class="panel"><h3>电源操作</h3><p class="muted">操作提交后由后台排队执行，页面会显示运行状态。</p><div class="buttons"><button id="start" class="primary">开机</button><button id="stop">正常关机</button><button id="hard" class="danger">强制关机</button></div><div class="divider"></div><h3>系统重装</h3><p class="muted">只能使用当前套餐绑定的黄金模板。旧系统会替换，数据可能丢失。</p><button id="reinstall" class="danger-outline">从套餐黄金模板重装</button></section></div>
-<div class="cols"><section class="panel"><div class="head"><h3>快照管理</h3><span id="snapCount">0 / 3</span></div><p class="muted">仅在完全关机时创建、恢复或删除，快照数量由当前套餐额度决定。</p><div class="inline"><input id="snapName" placeholder="新快照名称（英文/数字）" maxlength="48"><button id="snapCreate">创建快照</button></div><div id="snapList" class="items"></div></section><section class="panel self-service-panel"><div class="head"><h3>自助操作</h3><span class="muted">由管理员授权</span></div><p class="muted">选择要执行的快捷操作，执行情况会记录在下方；操作提交后请勿重复点击。</p><div class="self-service-controls"><select id="selfActionSelect" aria-label="选择自助操作"><option value="">请选择自助操作</option></select><button type="button" class="primary" id="selfActionExecute">执行操作</button></div><p id="selfActionDescription" class="self-action-description muted" role="status">请选择要执行的操作</p><div class="divider"></div><div class="head"><h3>最近执行记录</h3></div><div id="selfHistory" class="items"></div></section></div>
+<section class="panel screen-panel">
+  <div class="head screen-heading">
+    <h3>实时屏幕截图</h3>
+    <p class="muted screen-hint">点击刷新，获取一次屏幕截图。此处不提供远程鼠标键盘控制。</p>
+    <button id="screenRefresh" type="button" class="light">刷新画面</button>
+  </div>
+  <div class="monitor"><img id="screenImage" alt="当前 Windows 虚拟机屏幕" hidden><div id="screenEmpty">尚未获取屏幕截图</div></div>
+  <small id="screenStatus" class="muted"></small>
+</section>
+<div class="cols customer-power-reinstall">
+ <section class="panel"><h3>电源操作</h3><p class="muted">操作提交后由后台排队执行，页面会显示运行状态。</p><div class="buttons"><button id="start" class="primary">开机</button><button id="stop">正常关机</button><button id="hard" class="danger">强制关机</button></div><p id="powerWarning" class="muted" role="status" hidden></p></section>
+ <section class="panel"><h3>系统重装</h3><button id="reinstall" class="danger-outline">重装 Windows 系统</button></section>
+</div>
+<section class="panel"><div class="head"><h3>快照管理</h3><span id="snapCount">0 / 3</span></div>
+ <p class="muted">仅在完全关机时创建、恢复或删除，快照数量由当前套餐额度决定。<strong>重装系统快照丢失。</strong></p>
+ <div class="inline"><input id="snapName" placeholder="新快照名称（英文/数字）" maxlength="48"><button id="snapCreate">创建快照</button></div><div id="snapList" class="items"></div>
+</section>
+<div class="cols customer-actions-history">
+ <section class="panel self-service-panel">
+   <div class="head"><h3>自助操作</h3><span class="muted">由管理员授权</span></div>
+   <p class="muted">选择要执行的快捷操作；执行情况显示在右侧，提交后请勿重复点击。</p>
+   <div class="self-service-controls"><select id="selfActionSelect" aria-label="选择自助操作"><option value="">请选择自助操作</option></select><button type="button" class="primary" id="selfActionExecute">执行操作</button></div>
+   <p id="selfActionDescription" class="self-action-description muted" role="status">请选择要执行的操作</p>
+ </section>
+ <section class="panel customer-history-panel">
+   <div class="head"><h3>最近执行记录</h3><span class="muted">最近 2 条</span></div>
+   <div id="selfHistory" class="items"></div>
+ </section>
+</div>
 <section class="panel"><div class="head"><h3>我的应用入口与授权</h3><span class="muted">SnowLuma / DSH-fish-soul</span></div>
 
 <div id="myApps" class="items"></div>

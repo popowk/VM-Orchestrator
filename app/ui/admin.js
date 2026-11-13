@@ -1,4 +1,4 @@
-/* VM Orchestrator v1.4.56 - admin UI (single served asset) */
+/* VM Orchestrator v1.4.57 - admin UI (single served asset) */
 
 /* ===== ui.js ===== */
 'use strict';
@@ -193,7 +193,7 @@ function vmCard(vm){let card=el('div','vm-card'),head=el('div','vm-title'),name=
   actions.append(btn('强制关机','danger',()=>hardStop(vm),vm.power_state!=='POWERED_ON'));
   actions.append(btn('状态诊断','ghost',()=>openDiagnostics(vm)));
   actions.append(btn('初始化信息','ghost',()=>openProvision(vm)));
-  actions.append(btn('重装系统','warn',()=>openReinstall(vm),vm.power_state!=='POWERED_OFF'));
+  actions.append(btn('重装系统','warn',()=>openReinstall(vm),vm.power_state!=='POWERED_OFF'||vm.suspend_reinstall_blocked));
   actions.append(btn('软件更新','ghost',()=>{navigate('updates');},false));
  }
  if(vm.state==='ERROR')actions.append(btn('身份修复','warn',()=>repair(vm)));
@@ -403,7 +403,7 @@ async function openDetail(id) {
   if(!$('vmDialog').open)$('vmDialog').showModal();
 }
 function openReinstall(vm){
-  if(vm.state!=='READY'||vm.power_state!=='POWERED_OFF'){toast('请先完全关机并确认没有任务',true);return;}
+  if(vm.state!=='READY'||vm.power_state!=='POWERED_OFF'||vm.suspend_reinstall_blocked){toast('尚未满足安全重装条件：请先确认关机及挂起文件状态',true);return;}
   state.reinstallVm=vm;
   $('reinstallTarget').textContent=`目标：${vm.name} · ${vm.customer_ref||'无客户标签'}`;
   $('reinstallTypedName').value='';$('reinstallEraseConfirm').checked=false;$('reinstallBackupConfirm').checked=false;
@@ -500,16 +500,19 @@ function renderFleet(){
    for(const p of releases){
      const profile=state.portableProfiles.find(x=>p.product==='portable-'+x.id);
      if(!profile)continue;
+     // All online Agent 2.0.27+ clients, whether or not the program exists.
      const eligible=state.vms.filter(machine=>{
        const g=guestMap.get(machine.id);
        if(machine.state!=='READY'||!g||g.revoked_at||!g.last_seen||
           Date.now()-new Date(g.last_seen).getTime()>600000)return false;
        const ver=String(g.reported?.guest_agent||'').split('.').map(Number);
-       if(ver.length!==3||ver.some(x=>!Number.isInteger(x))||
-          (ver[0]===2&&ver[1]===0&&ver[2]<25)||ver[0]<2)return false;
-       return Object.keys(g.reported?.portable_software||{}).some(name=>
-         name.toLocaleLowerCase()===profile.folder.toLocaleLowerCase());
+       return ver.length===3&&ver.every(Number.isInteger)&&
+          (ver[0]>2||(ver[0]===2&&(ver[1]>0||ver[2]>=27)));
      });
+     const installedCount=eligible.filter(machine=>{
+       const report=guestMap.get(machine.id)?.reported?.portable_software||{};
+       return Object.keys(report).some(x=>x.toLocaleLowerCase()===profile.folder.toLocaleLowerCase());
+     }).length;
      const details=el('details','software-release');
      details.open=softwareGuestUI.releaseExpanded.has(p.id);
      details.addEventListener('toggle',()=>{
@@ -520,43 +523,44 @@ function renderFleet(){
      summary.append(el('strong','software-guest-name',profile.display_name+' · '+p.version),
        el('span','software-guest-brief','目标 C:\\dsh\\'+profile.folder),
        el('span','software-guest-state'+(eligible.length?' is-online':' is-offline'),
-          '可更新 '+eligible.length+' 台'));
+          '可部署 '+eligible.length+' 台'));
      details.append(summary);
      const body=el('div','software-guest-details');
      body.append(el('p','muted','启动：'+profile.launcher+' · 版本来源：'+
        (p.version_source||'未知')+' · SHA-256：'+p.sha256.slice(0,24)+'…'));
      const controls=el('div','software-release-actions');
-     const select=el('select');select.setAttribute('aria-label','选择要更新的客户机');
-     select.append(new Option('选择目标客户机',''));
-     eligible.forEach(machine=>select.add(new Option(machine.name,machine.id)));
-     select.value=eligible.some(x=>x.id===state.packageSelections[p.id])?
-       state.packageSelections[p.id]:'';
+     const select=el('select');select.setAttribute('aria-label','选择单台或全部客户机');
+     select.append(new Option('请选择单台或全部',''));
+     eligible.forEach(machine=>select.add(new Option(machine.name+'（'+(
+       Object.keys(guestMap.get(machine.id)?.reported?.portable_software||{}).some(n=>
+         n.toLocaleLowerCase()===profile.folder.toLocaleLowerCase())?'已安装':'首次安装'
+     )+'）',machine.id)));
+     if(eligible.length)select.add(new Option('全部在线客户机（'+eligible.length+' 台）','__ALL__'));
+     const previous=state.packageSelections[p.id]||'';
+     select.value=eligible.some(x=>x.id===previous)||previous==='__ALL__'?previous:'';
      select.addEventListener('change',()=>{state.packageSelections[p.id]=select.value;});
-     const submit=async selected=>{
-       const machine=state.vms.find(x=>x.id===selected);if(!machine)throw Error('目标客户机无效');
-       return request('/api/vms/'+encodeURIComponent(machine.id)+'/software-update','POST',
-         {package_id:p.id,confirm_backup_and_compatibility:true});
-     };
-     controls.append(select,btn('下发更新','primary small',async()=>{
-       if(!select.value)return toast('先选择客户机',true);
-       const machine=state.vms.find(x=>x.id===select.value);
-       if(!confirm('对 '+machine.name+' 更新 '+profile.display_name+' '+p.version+'？\n'+
-         '仅匹配软件原目录；原来关闭则更新后不启动。请确认已备份或制作快照。'))return;
-       try{const result=await submit(select.value);toast('任务已排队：'+result.task_id);await refresh();}
-       catch(e){toast('下发失败：'+e.message,true);}
+     controls.append(select,btn('下发软件','primary small',async()=>{
+       if(!select.value)return toast('请选择一台或全部客户机',true);
+       const all=select.value==='__ALL__';
+       const target=all?'全部 '+eligible.length+' 台在线客户机':
+         (eligible.find(x=>x.id===select.value)?.name||'指定客户机');
+       if(!confirm('确认对 '+target+' 部署 '+profile.display_name+' '+p.version+'？\n\n'+
+          '已安装：自动备份替换；先前在运行则恢复运行。\n'+
+          '未安装：下载校验并首次解压到 C:\\dsh\\'+profile.folder+'，默认保持关闭。\n'+
+          '离线、Guest 版本不足或正在更新的客户机将跳过。'))return;
+       try{
+         const result=await request('/api/fleet/portable/deploy','POST',{
+           package_id:p.id,scope:all?'all':'one',
+           vm_id:all?null:select.value,confirm:true,confirm_all:all
+         });
+         const failed=result.skipped||[];
+         toast('已排队 '+result.queued.length+' / '+result.total+' 台'+
+           (failed.length?'；跳过 '+failed.length+' 台，'+failed.slice(0,3)
+             .map(x=>(state.vms.find(v=>v.id===x.vm_id)?.name||x.vm_id)+'：'+x.reason).join('；'):''),
+           Boolean(failed.length));
+         await refresh();
+       }catch(e){toast('部署失败：'+e.message,true);}
      },!eligible.length));
-     if(eligible.length>1)controls.append(btn('批量更新 '+eligible.length+' 台','ghost small',async()=>{
-       if(!confirm('对 '+eligible.length+' 台在线客户机下发 '+profile.display_name+
-         ' '+p.version+' 更新任务？\n每台独立校验和回滚；不对未知状态自动重试。'))return;
-       let queued=0;const failed=[];
-       for(const machine of eligible){
-         try{await submit(machine.id);queued++;}
-         catch(e){failed.push(machine.name+': '+e.message);}
-       }
-       toast('已排队 '+queued+' / '+eligible.length+' 台'+
-         (failed.length?'；失败：'+failed.join('、'):''),
-         Boolean(failed.length));await refresh();
-     }));
      controls.append(btn('删除版本包','danger small',async()=>{
        if(!confirm('删除 '+profile.display_name+' '+p.version+' 的 ZIP 更新包？正在执行及绑定的任务将阻止删除。'))return;
        try{await request('/api/fleet/packages/'+encodeURIComponent(p.id),'DELETE');
@@ -566,7 +570,8 @@ function renderFleet(){
        }catch(e){toast(e.message,true);}
      }));
      body.append(controls);
-     if(!eligible.length)body.append(el('p','muted','暂无符合条件的在线 Guest；需要 Agent v2.0.25+ 及匹配的 C:\\dsh 程序目录。'));
+     body.append(el('p','muted','当前在线可部署 '+eligible.length+' 台，其中已安装 '+installedCount+' 台，首次安装 '+(eligible.length-installedCount)+' 台。'));
+     if(!eligible.length)body.append(el('p','muted','需要 Guest Agent v2.0.27+ 且最近 10 分钟有心跳。'));
      details.append(body);pack.append(details);
    }
  }
@@ -631,57 +636,32 @@ window.addEventListener('DOMContentLoaded',async()=>{
    const file=$('portableZip').files[0],name=$('portableName').value.trim(),
      launcher=$('portableLauncher').value.trim(),
      version=$('portableVersion').value.trim(),
-     versionFile=$('portableVersionFile').value.trim(),
-     deploy=$('portableDeployAll').checked;
+     versionFile=$('portableVersionFile').value.trim();
    if(!file||!file.name.toLowerCase().endsWith('.zip'))return toast('请上传 ZIP 压缩包',true);
    if(file.size>512*1024*1024)return toast('ZIP 最大 512 MB',true);
    if(!name||!launcher)return toast('软件名称和启动文件不可为空',true);
-   const summary='确认上传已审核的便携程序包？\n\n软件：'+name+
-     '\n启动文件：'+launcher+'\nZIP：'+file.name+
-     '\n\nZIP 必须只有一个顶层程序文件夹。'+
-     (deploy?'\n\n注意：上传成功后自动向所有匹配且在线的客户虚拟机下发更新任务。':'');
-   if(!confirm(summary))return;
+   if(versionFile&&(/^[a-zA-Z]:[\\/]/.test(versionFile)||versionFile.startsWith('/')||versionFile.includes('..'))){
+     return toast('版本文件只填写压缩包内的相对文件名（如 VERSION），不要填 C:\\dsh 安装目录',true);
+   }
+   if(!confirm('确认登记软件 ZIP？\n软件：'+name+'\n启动文件：'+launcher+
+     '\nZIP：'+file.name+'\n\n上传只会登记版本，不会自动部署。'))return;
    const button=$('portableUploadForm').querySelector('button[type="submit"]');
    button.disabled=true;button.textContent='正在校验 ZIP 并登记…';
    try{
-     const query=new URLSearchParams({
-       name,launcher,version_override:version,version_file:versionFile
-     });
+     const query=new URLSearchParams({name,launcher,version_override:version,version_file:versionFile});
      const response=await fetch('/api/fleet/portable/packages?'+query,{
        method:'POST',credentials:'same-origin',
        headers:{'X-UI-CSRF':state.csrf,'Content-Type':'application/zip'},body:file
      });
      const result=await response.json().catch(()=>({}));
      if(!response.ok)throw Error(result.detail||'上传失败 HTTP '+response.status);
-     const folder=result.profile.folder;
-     let scheduled=0;const failures=[];
-     if(deploy){
-       const matching=state.vms.filter(vm=>{
-         const guest=state.guests.find(g=>g.vm_id===vm.id);
-         if(!guest||guest.revoked_at||!guest.last_seen||vm.state!=='READY'||
-           Date.now()-new Date(guest.last_seen).getTime()>600000)return false;
-         return Object.keys(guest.reported?.portable_software||{}).some(x=>
-           x.toLocaleLowerCase()===folder.toLocaleLowerCase());
-       });
-       for(const vm of matching){
-         try{
-           await request('/api/vms/'+encodeURIComponent(vm.id)+'/software-update','POST',{
-             package_id:result.package.id,confirm_backup_and_compatibility:true
-           });scheduled++;
-         }catch(ex){failures.push(vm.name+'：'+ex.message);}
-       }
-     }
      $('portableUploadForm').reset();
-     const message='已登记 '+result.profile.display_name+' · C:\\dsh\\'+folder+
-       ' · '+result.profile.version+
-       (deploy?'；已下发 '+scheduled+' 台': '')+
-       (failures.length?'；失败：'+failures.join('、'):'');
-     toast(message,failures.length>0);
+     toast('已登记 '+result.profile.display_name+' · C:\\dsh\\'+result.profile.folder+
+       ' · '+result.profile.version+'。请在版本库选择单台或全部下发。');
      await refresh();
    }catch(error){toast('软件包校验或登记失败：'+error.message,true);}
    finally{button.disabled=false;button.textContent='上传并登记软件更新';}
  });
- $('dialogClose').addEventListener('click',()=>$('vmDialog').close());
  $('cloneForm').addEventListener('submit',async ev=>{ev.preventDefault();const name=$('cloneName').value.trim(),template_id=$('cloneTemplate').value,customer_ref=$('cloneCustomer').value.trim()||null;
   const autoStart=$('cloneAutoStart').checked,screen=$('cloneEnableScreen').checked,unattended=$('cloneUnattended').checked;
   if(unattended && !(state.templates.find(t=>t.id===template_id)?.oobe_bootstrap_version>=2))return toast('所选模板未安装 V1.2 Administrator OOBE 引导，请选择新版封存模板或取消无人值守',true);
@@ -1171,47 +1151,81 @@ window.VMOSelfService=(()=>{
  }
  function renderSelfActions(info){
    const rows=info?.items||[];
-   const key=JSON.stringify([vm,connection,selfSubmitting,info?.message,rows.map(a=>[a.id,a.label,a.description,a.kind,a.updated_at])]);
+   const key=JSON.stringify([vm,connection,selfSubmitting,info?.message,
+      rows.map(a=>[a.id,a.label,a.description,a.kind,a.updated_at])]);
    if(key===selfFingerprint)return;
    selfFingerprint=key;
    const status=by('remoteSelfActionsStatus'),target=by('remoteSelfActions');
-   status.textContent=info?.message||'该虚拟机没有可用的客户自助操作';
+   const before=target.querySelector('select')?.value||'';
+   status.textContent=info?.message||'当前虚拟机没有已授权的自助操作';
    target.replaceChildren();
-   for(const item of rows){
-     const row=txt('div','','remote-app-row'),description=txt('div','');
-     description.append(txt('strong',item.label));
-     if(item.description)description.append(txt('small',item.description));
-     description.append(txt('small',item.kind==='SOFTWARE_UPDATE'?'已审核的软件更新包':'管理员预设命令；命令内容不会暴露给客户'));
-     const button=txt('button','执行操作','btn ghost small');button.type='button';
-     button.disabled=!connection||Boolean(selfSubmitting);
-     button.onclick=async()=>{
-       if(!connection)return alert('Guest WSS 未连接，无法执行');
-       if(selfSubmitting)return;
-       if(!confirm('确认对当前客户虚拟机执行「'+item.label+'」？\n\n将复用客户自助操作配置、去重和审计机制；执行结果统一显示在最近执行记录里。'))return;
-       const requestVm=vm;
-       selfSubmitting=item.id;selfFingerprint='';button.disabled=true;
-       status.textContent='正在下发「'+item.label+'」…';
-       try{
-         const result=await api('/api/vms/'+encodeURIComponent(requestVm)+
-           '/remote/self-actions/'+encodeURIComponent(item.id)+'/execute','POST',
-           {request_id:generateRequestId(),confirm:true});
-         status.textContent='操作已提交：'+result.request_id+' · 结果将在「最近执行记录」更新';
-       }catch(err){status.textContent='操作未下发：'+err.message;alert(status.textContent);}
-       finally{selfSubmitting='';selfFingerprint='';await refresh();}
-     };
-     row.append(description,button);target.append(row);
+   if(!rows.length)return;
+   const bar=txt('div','','remote-self-controls');
+   const select=document.createElement('select');
+   select.setAttribute('aria-label','选择客户自助操作');
+   select.append(new Option('请选择自助操作',''));
+   rows.forEach(item=>select.add(new Option(item.label+
+      (item.kind==='SOFTWARE_UPDATE'?' · 软件更新':''),item.id)));
+   select.value=rows.some(x=>x.id===before)?before:rows[0].id;
+   const button=txt('button','执行操作','btn primary small');
+   button.type='button';
+   const help=txt('p','','muted remote-self-description');
+   function selection(){
+     const selected=rows.find(x=>x.id===select.value);
+     help.textContent=selected?.description||
+       (selected?'管理员已授权的快捷操作':'请选择操作');
+     button.disabled=!connection||!selected||Boolean(selfSubmitting);
    }
+   select.onchange=selection;
+   button.onclick=async()=>{
+     const selected=rows.find(x=>x.id===select.value);
+     if(!connection)return alert('Guest WSS 未连接，无法执行');
+     if(!selected||selfSubmitting)return;
+     if(!confirm('确认对当前客户虚拟机执行「'+selected.label+'」？\n\n'+
+       (selected.description||'执行后无法撤销，请勿重复提交。')+
+       '\n执行结果将在「最近执行记录」显示。'))return;
+     const requestVm=vm;
+     selfSubmitting=selected.id;selfFingerprint='';button.disabled=true;
+     status.textContent='正在下发「'+selected.label+'」…';
+     try{
+       const result=await api('/api/vms/'+encodeURIComponent(requestVm)+
+         '/remote/self-actions/'+encodeURIComponent(selected.id)+'/execute','POST',
+         {request_id:generateRequestId(),confirm:true});
+       status.textContent='已提交 '+result.request_id+'，请查看最近执行记录';
+     }catch(err){status.textContent='操作未下发：'+err.message;alert(status.textContent);}
+     finally{selfSubmitting='';selfFingerprint='';await refresh();}
+   };
+   bar.append(select,button);
+   target.append(bar,help);
+   selection();
+ }
+ async function loadRecentOps(vmId,requestedPage){
+   const needed=Math.max(5,requestedPage*5);
+   let count=0,total=0;const items=[];
+   while(count<needed){
+     const size=Math.min(100,needed-count);
+     const batch=await api('/api/vms/'+encodeURIComponent(vmId)+
+       '/remote/operations?paged=true&page='+Math.floor(count/size+1)+
+       '&page_size='+size);
+     total=batch.total;
+     items.push(...(batch.items||[]));
+     count+=size;
+     if(items.length>=total||!(batch.items||[]).length)break;
+   }
+   return {items,total};
  }
  function renderOps(paged, self){
-   page=paged.page;
+   // The controller holds the page; loadRecentOps fetches sufficient rows.
    const history=self?.executions||[];
    const commands=new Map(history.filter(x=>x.action_kind==='COMMAND'&&x.operation_id).map(x=>[x.operation_id,x]));
-   const updates=page===1?history.filter(x=>x.action_kind==='SOFTWARE_UPDATE'):[];
-   by('remotePageLabel').textContent='命令第 '+page+' / '+paged.pages+' 页 · '+paged.total+
-      ' 条'+(updates.length?' · 自助更新最近 '+updates.length+' 条':'');
-   by('remotePrev').disabled=page<=1;by('remoteNext').disabled=page>=paged.pages;
+   const updates=history.filter(x=>x.action_kind==='SOFTWARE_UPDATE');
+   const total=(paged.total||0)+updates.length;
+   const pages=Math.max(1,Math.ceil(total/5));
+   page=Math.max(1,Math.min(page,pages));
+   by('remotePageLabel').textContent='第 '+page+' / '+pages+' 页 · '+total+' 条（每页5条）';
+   by('remotePrev').disabled=page<=1;by('remoteNext').disabled=page>=pages;
    const ops=paged.items||[];
-   const fingerprint=JSON.stringify([ops.map(o=>[o.id,o.state,o.attempt_count,o.completed_at,o.last_error,o.result]),
+   const fingerprint=JSON.stringify([page,ops.map(o=>[o.id,o.state,o.attempt_count,o.completed_at,o.last_error,o.result]),
      updates.map(x=>[x.request_id,x.status,x.updated_at,x.output_text]),history.map(x=>[x.operation_id,x.label])]);
    if(fingerprint===opsFingerprint)return;opsFingerprint=fingerprint;
    const target=by('remoteOps');const opened=new Set([...target.querySelectorAll('details[open]')].map(x=>x.dataset.id));
@@ -1219,8 +1233,9 @@ window.VMOSelfService=(()=>{
    const merged=[...ops.map(x=>({type:'op',time:x.created_at,entry:x})),
      ...updates.map(x=>({type:'self-update',time:x.created_at,entry:x}))];
    merged.sort((a,b)=>Date.parse(b.time||'')-Date.parse(a.time||''));
-   if(!merged.length){target.append(txt('p','当前客户机暂无执行记录','muted'));return;}
-   for(const item of merged){
+   const visible=merged.slice((page-1)*5,page*5);
+   if(!visible.length){target.append(txt('p','当前页暂无执行记录','muted'));return;}
+   for(const item of visible){
      const row=txt('div','','remote-op-card'),head=txt('div','','remote-op-header');
      if(item.type==='self-update'){
        const task=item.entry;
@@ -1281,7 +1296,7 @@ window.VMOSelfService=(()=>{
      const requestVm=vm;
      const [presence,ops,apps,upgrade,self]=await Promise.all([
         api('/api/vms/'+encodeURIComponent(vm)+'/remote/presence'),
-        api('/api/vms/'+encodeURIComponent(vm)+'/remote/operations?paged=true&page='+page+'&page_size=15'),
+        loadRecentOps(vm,page),
         api('/api/vms/'+encodeURIComponent(vm)+'/remote/apps'),
         api('/api/vms/'+encodeURIComponent(vm)+'/agent-upgrade'),
          api('/api/vms/'+encodeURIComponent(vm)+'/remote/self-actions').catch(err=>({items:[],executions:[],message:'自助操作读取失败：'+err.message}))]);

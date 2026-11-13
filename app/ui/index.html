@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.56"></script>
+<script src="/ui/app-route-recover.js?v=1.4.57"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.56">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.57">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.56" defer></script>
+<script src="/ui/admin.js?v=1.4.57" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -138,11 +138,8 @@
           <label>启动文件名（相对于程序目录）<input id="portableLauncher" placeholder="例如 MyApp.exe 或 launcher.bat" maxlength="100" required></label>
           <label class="wide">软件 ZIP 压缩包（只包含一个顶层文件夹）<input type="file" id="portableZip" accept=".zip,application/zip" required></label>
           <label>版本号（可不填：自动识别）<input id="portableVersion" placeholder="留空自动：VERSION、JSON 或压缩包指纹" maxlength="40"></label>
-          <label>版本文件路径（可不填）<input id="portableVersionFile" placeholder="例如 VERSION、config/version.txt" maxlength="100"></label>
-          <label class="wide" style="display:flex;align-items:center;gap:8px">
-            <input type="checkbox" id="portableDeployAll" style="width:18px;height:18px;flex:none">
-            <span>上传成功后，对所有已安装该软件且 Guest 在线的客户机自动下发（必须在上传时确认）</span>
-          </label>
+          <label>版本文件名（可不填，不要填安装目录）<input id="portableVersionFile" placeholder="例如 VERSION 或 config/version.txt；留空自动识别" maxlength="100"></label>
+          <p class="muted wide">先上传登记，再到版本库选择单台或全部客户机下发；不会在上传时自动部署。</p>
           <p class="muted wide">优先读取 VERSION、version.txt、package.json；客户机可读取 EXE 版本资源。无可验证版本时以构建指纹追踪，管理员可手动填写。已登记软件的启动文件不能被新包悄悄更改。</p>
           <div class="form-submit"><button type="submit" class="btn primary">上传并登记软件更新</button></div>
         </form>

@@ -275,77 +275,110 @@ def _copy_persistent(old: Path, stage: Path):
 def update_portable(options: dict, archive: Path, task_id: str, version: str,
                     root: Path, *, extractor, on_phase=None, base: Path=Path('C:/dsh'),
                     process_inspector=None, launcher=None) -> dict:
-    """Stop only owned processes; keep old run-state after update or rollback."""
+    """Install or update one approved C:\dsh application transactionally.
+
+    Existing installation: capture previous running state, stop only owned
+    processes, swap folders, restart only if previously running.
+    First installation: install, validate and leave the application STOPPED.
+    Never overwrite an unrecognized preexisting directory and never remove
+    a deployment that this task cannot prove it created.
+    """
     profile=options.get('portable') or {}
     folder=profile.get('folder','')
     executable=safe_relative(profile.get('launcher',''))
     if executable.suffix.lower() not in ALLOWED_START or not VERSION.fullmatch(version):
         raise RuntimeError('PORTABLE_LAUNCHER_OR_VERSION_INVALID')
     version_file=profile.get('version_file','')
-    if version_file:safe_relative(version_file)
+    if version_file:
+        safe_relative(version_file)
     program=program_path(folder,base)
-    if not program.is_dir() or not (program/executable).is_file():
-        raise RuntimeError('PORTABLE_LOCAL_INSTALL_NOT_FOUND')
-    if not _no_links(program):
-        raise RuntimeError('PORTABLE_EXISTING_PROGRAM_CONTAINS_LINKS')
     if not base.is_dir():
         raise RuntimeError('PORTABLE_BASE_DIRECTORY_MISSING')
+    if program.exists() and not program.is_dir():
+        raise RuntimeError('PORTABLE_EXISTING_PATH_NOT_DIRECTORY')
+    exists=program.is_dir()
+    if exists and not (program/executable).is_file():
+        raise RuntimeError('PORTABLE_UNKNOWN_EXISTING_DIRECTORY')
+    if exists and not _no_links(program):
+        raise RuntimeError('PORTABLE_EXISTING_PROGRAM_CONTAINS_LINKS')
     if not re.fullmatch(r'[0-9a-f-]{36}',task_id):
         raise RuntimeError('PORTABLE_UPDATE_TASK_ID_INVALID')
     backup=base/('.vmo-backup-'+folder+'-'+task_id)
     stage=base/('.vmo-stage-'+task_id)
     extracted=root/'working'/('portable-'+task_id)
     failed=base/('.vmo-failed-'+folder+'-'+task_id)
+    lock=base/('.vmo-deploy-lock-'+folder)
     if any(x.exists() for x in (backup,stage,extracted,failed)):
         raise RuntimeError('PORTABLE_PREVIOUS_UPDATE_FILES_EXIST')
+    # Acquire a per-application lock, even for a first install.
+    # A crash leaves a visible lock for explicit recovery rather than
+    # silently permitting another install on top of unknown state.
+    try:
+        fd=os.open(lock, os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise RuntimeError('PORTABLE_DEPLOYMENT_ALREADY_RUNNING') from exc
+    os.close(fd)
+    marker_name='.vmo-deploy-owner-'+task_id
+    marker=program/marker_name
     checker=process_inspector or (lambda op: _processes(
         Path(__file__).with_name('Portable-Processes.ps1'),program,executable,op))
     launch=launcher or (lambda: _launch(program,executable))
     was_running=False
-    swapped=False
     stopped=False
+    swapped=False
+    old_ver={'version':''}
     def phase(name):
         if on_phase:on_phase(name)
-    _strict_zip_folder(archive,folder,executable)
-    extracted.parent.mkdir(parents=True,exist_ok=True)
     try:
+        _strict_zip_folder(archive,folder,executable)
+        extracted.parent.mkdir(parents=True,exist_ok=True)
         extracted.mkdir(exist_ok=False)
-        extractor(archive,extracted)  # ZIP top folder stripped by existing safe extractor
+        extractor(archive,extracted)
         if not (extracted/executable).is_file() or not _no_links(extracted):
             raise RuntimeError('PORTABLE_EXTRACTED_CONTENT_INVALID')
+        if (extracted/marker_name).exists():
+            raise RuntimeError('PORTABLE_ARCHIVE_CONTAINS_RESERVED_FILE')
         shutil.copytree(extracted,stage,symlinks=False)
-        _copy_persistent(program,stage)
+        if exists:
+            _copy_persistent(program,stage)
         if not (stage/executable).is_file() or not _no_links(stage):
             raise RuntimeError('PORTABLE_STAGE_VALIDATION_FAILED')
+        (stage/marker_name).write_text(task_id,encoding='ascii')
         phase('staged')
-        old_ver=installed_version(program,executable.as_posix(),version_file)
-        was_running=checker('Inspect')['running']
-        if was_running:
-            # A previously running application must be restartable in its
-            # logged-in user session. Check this before altering any files.
+        if exists:
+            old_ver=installed_version(program,executable.as_posix(),version_file)
+            was_running=checker('Inspect')['running']
+            if was_running:
+                # Resume must be possible before stopping the original.
+                if launcher is None:
+                    try:
+                        from .interactive_session import _get_active_session
+                    except ImportError:
+                        from interactive_session import _get_active_session
+                    _get_active_session()
+                checker('Stop')
+                if checker('Inspect')['running']:
+                    raise RuntimeError('PORTABLE_PROGRAM_STILL_RUNNING')
+                stopped=True
+                phase('stopped')
+            os.replace(program,backup)
             try:
-                from .interactive_session import _get_active_session
-            except ImportError:
-                from interactive_session import _get_active_session
-            if launcher is None:_get_active_session()
-            checker('Stop')
-            if checker('Inspect')['running']:
-                raise RuntimeError('PORTABLE_PROGRAM_STILL_RUNNING')
-            stopped=True
-            phase('stopped')
-        os.replace(program,backup)
-        try:
-            os.replace(stage,program)
-            swapped=True
-        except BaseException:
-            os.replace(backup,program)
-            raise
+                os.replace(stage,program)
+            except BaseException:
+                os.replace(backup,program)
+                raise
+        else:
+            # The destination must not have appeared since preflight. In
+            # Windows os.rename refuses any existing destination directory.
+            if program.exists():
+                raise RuntimeError('PORTABLE_DESTINATION_APPEARED')
+            os.rename(stage,program)
+        swapped=True
         phase('swapped')
         installed=installed_version(program,executable.as_posix(),version_file)
-        # Check when both source and installed version are actually verifiable.
-        if profile.get('version_source','').startswith('zip:'):
-            rel=profile['version_source'][4:]
-            if version_from_source_file(program,rel) != version:
+        source=profile.get('version_source','')
+        if source.startswith('zip:'):
+            if version_from_source_file(program,source[4:])!=version:
                 raise RuntimeError('PORTABLE_INSTALLED_VERSION_MISMATCH')
         if was_running:
             launch()
@@ -353,25 +386,35 @@ def update_portable(options: dict, archive: Path, task_id: str, version: str,
             for _ in range(12):
                 time.sleep(1)
                 if checker('Inspect')['running']:
-                    healthy=True;break
+                    healthy=True
+                    break
             if not healthy:
                 raise RuntimeError('PORTABLE_RESTART_NOT_RUNNING')
             phase('healthy')
         else:
             phase('verified')
-        return {'backup':str(backup),'previous_running':was_running,
-                'restarted':was_running,'version':installed['version'],
-                'version_source':installed['source'], 'runtime_version_api':
-                    'version_file_or_exe' if installed['verified'] else 'not_verified',
-                'old_version':old_ver['version'], 'version_evidence':
-                    'installed_release_manifest' if installed['verified'] else 'unverified',
-                'note':('升级完成并恢复此前运行状态' if was_running else '升级完成；原来未运行，保持关闭')}
+        # Only the task's own marker may be removed after success.
+        marker.unlink(missing_ok=True)
+        return {'backup':str(backup) if exists else '',
+                'installed_fresh':not exists,
+                'previous_running':was_running,'restarted':was_running,
+                'version':installed['version'],'version_source':installed['source'],
+                'runtime_version_api':'version_file_or_exe' if installed['verified'] else 'not_verified',
+                'old_version':old_ver['version'],
+                'version_evidence':'installed_release_manifest' if installed['verified'] else 'unverified',
+                'note':('首次安装完成；程序保持关闭，需手动启动'
+                        if not exists else
+                        '升级完成并恢复此前运行状态' if was_running
+                        else '升级完成；原来未运行，保持关闭')}
     except BaseException as error:
-        if swapped and backup.is_dir():
+        if swapped and exists and backup.is_dir():
             try:
                 if was_running and checker('Inspect')['running']:
                     checker('Stop')
-                os.replace(program,failed)
+                if marker.is_file() and marker.read_text(encoding='ascii')==task_id:
+                    os.replace(program,failed)
+                else:
+                    raise RuntimeError('PORTABLE_DEPLOYMENT_OWNERSHIP_UNVERIFIED')
                 os.replace(backup,program)
                 if was_running and stopped:
                     launch()
@@ -379,12 +422,30 @@ def update_portable(options: dict, archive: Path, task_id: str, version: str,
             except BaseException as recovery_error:
                 phase('recovery_required')
                 raise RuntimeError('PORTABLE_ROLLBACK_REQUIRES_MANUAL_RECOVERY') from recovery_error
+        elif swapped and not exists:
+            # A failed first deployment cannot have any old version to restore.
+            # Keep the owned new directory quarantined rather than removing it.
+            try:
+                if marker.is_file() and marker.read_text(encoding='ascii')==task_id:
+                    os.replace(program,failed)
+                    phase('rolled_back_fresh_install')
+                else:
+                    raise RuntimeError('PORTABLE_DEPLOYMENT_OWNERSHIP_UNVERIFIED')
+            except BaseException as recovery_error:
+                phase('recovery_required')
+                raise RuntimeError('PORTABLE_FRESH_INSTALL_REQUIRES_MANUAL_RECOVERY') from recovery_error
         elif stopped and was_running and program.is_dir():
-            # Failure after stopping, before swap: resume original.
-            try:launch()
+            try:
+                launch()
             except BaseException:
                 raise RuntimeError('PORTABLE_ORIGINAL_RESTART_FAILED') from error
         raise
     finally:
-        if extracted.exists():shutil.rmtree(extracted,ignore_errors=True)
-        if stage.exists():shutil.rmtree(stage,ignore_errors=True)
+        if extracted.exists():
+            shutil.rmtree(extracted,ignore_errors=True)
+        if stage.exists():
+            shutil.rmtree(stage,ignore_errors=True)
+        # If the updater exits without a rollback exception the lock is safe
+        # to release; partial replacement with failed recovery keeps it.
+        if not (swapped and exists and backup.is_dir() and not program.is_dir()):
+            lock.unlink(missing_ok=True)
