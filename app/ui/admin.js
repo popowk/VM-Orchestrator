@@ -636,57 +636,32 @@ window.addEventListener('DOMContentLoaded',async()=>{
    const file=$('portableZip').files[0],name=$('portableName').value.trim(),
      launcher=$('portableLauncher').value.trim(),
      version=$('portableVersion').value.trim(),
-     versionFile=$('portableVersionFile').value.trim(),
-     deploy=$('portableDeployAll').checked;
+     versionFile=$('portableVersionFile').value.trim();
    if(!file||!file.name.toLowerCase().endsWith('.zip'))return toast('请上传 ZIP 压缩包',true);
    if(file.size>512*1024*1024)return toast('ZIP 最大 512 MB',true);
    if(!name||!launcher)return toast('软件名称和启动文件不可为空',true);
-   const summary='确认上传已审核的便携程序包？\n\n软件：'+name+
-     '\n启动文件：'+launcher+'\nZIP：'+file.name+
-     '\n\nZIP 必须只有一个顶层程序文件夹。'+
-     (deploy?'\n\n注意：上传成功后自动向所有匹配且在线的客户虚拟机下发更新任务。':'');
-   if(!confirm(summary))return;
+   if(versionFile&&(/^[a-zA-Z]:[\\/]/.test(versionFile)||versionFile.startsWith('/')||versionFile.includes('..'))){
+     return toast('版本文件只填写压缩包内的相对文件名（如 VERSION），不要填 C:\\dsh 安装目录',true);
+   }
+   if(!confirm('确认登记软件 ZIP？\n软件：'+name+'\n启动文件：'+launcher+
+     '\nZIP：'+file.name+'\n\n上传只会登记版本，不会自动部署。'))return;
    const button=$('portableUploadForm').querySelector('button[type="submit"]');
    button.disabled=true;button.textContent='正在校验 ZIP 并登记…';
    try{
-     const query=new URLSearchParams({
-       name,launcher,version_override:version,version_file:versionFile
-     });
+     const query=new URLSearchParams({name,launcher,version_override:version,version_file:versionFile});
      const response=await fetch('/api/fleet/portable/packages?'+query,{
        method:'POST',credentials:'same-origin',
        headers:{'X-UI-CSRF':state.csrf,'Content-Type':'application/zip'},body:file
      });
      const result=await response.json().catch(()=>({}));
      if(!response.ok)throw Error(result.detail||'上传失败 HTTP '+response.status);
-     const folder=result.profile.folder;
-     let scheduled=0;const failures=[];
-     if(deploy){
-       const matching=state.vms.filter(vm=>{
-         const guest=state.guests.find(g=>g.vm_id===vm.id);
-         if(!guest||guest.revoked_at||!guest.last_seen||vm.state!=='READY'||
-           Date.now()-new Date(guest.last_seen).getTime()>600000)return false;
-         return Object.keys(guest.reported?.portable_software||{}).some(x=>
-           x.toLocaleLowerCase()===folder.toLocaleLowerCase());
-       });
-       for(const vm of matching){
-         try{
-           await request('/api/vms/'+encodeURIComponent(vm.id)+'/software-update','POST',{
-             package_id:result.package.id,confirm_backup_and_compatibility:true
-           });scheduled++;
-         }catch(ex){failures.push(vm.name+'：'+ex.message);}
-       }
-     }
      $('portableUploadForm').reset();
-     const message='已登记 '+result.profile.display_name+' · C:\\dsh\\'+folder+
-       ' · '+result.profile.version+
-       (deploy?'；已下发 '+scheduled+' 台': '')+
-       (failures.length?'；失败：'+failures.join('、'):'');
-     toast(message,failures.length>0);
+     toast('已登记 '+result.profile.display_name+' · C:\\dsh\\'+result.profile.folder+
+       ' · '+result.profile.version+'。请在版本库选择单台或全部下发。');
      await refresh();
    }catch(error){toast('软件包校验或登记失败：'+error.message,true);}
    finally{button.disabled=false;button.textContent='上传并登记软件更新';}
  });
- $('dialogClose').addEventListener('click',()=>$('vmDialog').close());
  $('cloneForm').addEventListener('submit',async ev=>{ev.preventDefault();const name=$('cloneName').value.trim(),template_id=$('cloneTemplate').value,customer_ref=$('cloneCustomer').value.trim()||null;
   const autoStart=$('cloneAutoStart').checked,screen=$('cloneEnableScreen').checked,unattended=$('cloneUnattended').checked;
   if(unattended && !(state.templates.find(t=>t.id===template_id)?.oobe_bootstrap_version>=2))return toast('所选模板未安装 V1.2 Administrator OOBE 引导，请选择新版封存模板或取消无人值守',true);
