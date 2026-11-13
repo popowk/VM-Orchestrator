@@ -312,6 +312,8 @@ class FleetStore:
         results are never retried automatically, even if they failed.
         """
         with self.db() as d:
+            if not d.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='portable_profiles'").fetchone():
+                return {'queued':[], 'skipped':[], 'policies':0}
             rows=d.execute('''SELECT p.id,p.active_package_id FROM portable_profiles p
                 JOIN update_packages u ON u.id=p.active_package_id AND u.deleted_at IS NULL
                 WHERE p.auto_deploy=1 AND p.active_package_id!='' ''').fetchall()
