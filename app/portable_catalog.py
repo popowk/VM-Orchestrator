@@ -173,12 +173,13 @@ class PortableCatalog:
                 d.execute("ALTER TABLE portable_profiles ADD COLUMN active_package_id TEXT NOT NULL DEFAULT ''")
                 # One initial active release per existing software; older ZIPs
                 # remain archived for task history and explicit deletion.
-                d.execute("""
-                    UPDATE portable_profiles SET active_package_id=COALESCE((
-                        SELECT id FROM update_packages
-                        WHERE product='portable-'||portable_profiles.id AND deleted_at IS NULL
-                        ORDER BY uploaded_at DESC, rowid DESC LIMIT 1), '')
-                """)
+                if d.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='update_packages'").fetchone():
+                    d.execute("""
+                        UPDATE portable_profiles SET active_package_id=COALESCE((
+                            SELECT id FROM update_packages
+                            WHERE product='portable-'||portable_profiles.id AND deleted_at IS NULL
+                            ORDER BY uploaded_at DESC, rowid DESC LIMIT 1), '')
+                    """)
             d.execute('CREATE INDEX IF NOT EXISTS portable_package_meta_profile ON portable_package_meta(profile_id,uploaded_at)')
 
 
@@ -226,11 +227,12 @@ class PortableCatalog:
                              (package_id,profile['id']))
             if result.rowcount!=1:
                 raise PortableCatalogError('软件目录档案不存在，无法激活版本')
-            d.execute('''UPDATE guest_tasks SET status='CANCELLED',
-                message='已由同软件的新生效版本替代，旧任务未执行',completed_at=CURRENT_TIMESTAMP
-                WHERE status='QUEUED' AND package_id!=? AND package_id IN (
-                    SELECT id FROM update_packages WHERE product=?)''',
-                (package_id,'portable-'+profile['id']))
+            if d.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='guest_tasks'").fetchone():
+                d.execute('''UPDATE guest_tasks SET status='CANCELLED',
+                    message='已由同软件的新生效版本替代，旧任务未执行',completed_at=CURRENT_TIMESTAMP
+                    WHERE status='QUEUED' AND package_id!=? AND package_id IN (
+                        SELECT id FROM update_packages WHERE product=?)''',
+                    (package_id,'portable-'+profile['id']))
 
     def set_auto_deploy(self, profile_id: str, enabled: bool) -> dict:
         """Persist the operator's explicit fleet-wide deployment policy."""
