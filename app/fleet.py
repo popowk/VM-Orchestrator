@@ -209,7 +209,7 @@ class FleetStore:
         with self.db() as d:
             return [dict(r) for r in d.execute("SELECT * FROM update_packages WHERE filename != 'approved-plugin-command' AND deleted_at IS NULL ORDER BY uploaded_at DESC")]
 
-    def delete_package(self, package_id: str):
+    def delete_package(self, package_id: str, *, require_inactive: bool = False):
         """Remove an approved ZIP but retain immutable update-task audit history.
 
         Refuse deletion if this artifact is pinned to a customer self-service
@@ -231,6 +231,10 @@ class FleetStore:
                 (package_id,)).fetchone()
             if not row or row['filename']=='approved-plugin-command':
                 raise FleetError('Update package does not exist')
+            if require_inactive and d.execute(
+                'SELECT 1 FROM portable_profiles WHERE active_package_id=? LIMIT 1',
+                (package_id,)).fetchone():
+                raise FleetError('清理时该软件包重新成为当前生效版本，禁止删除')
             if d.execute("SELECT 1 FROM guest_tasks WHERE package_id=? AND status IN ('QUEUED','CLAIMED','RUNNING','VERIFY_REQUIRED','UNKNOWN','TIMED_OUT') LIMIT 1",
                          (package_id,)).fetchone():
                 raise FleetError('更新包仍有正在执行的任务，请先等待完成')
