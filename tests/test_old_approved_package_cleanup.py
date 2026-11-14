@@ -81,6 +81,12 @@ class ApprovedPackageCleanupTests(unittest.TestCase):
         self.assertIsNotNone(old['deleted_at'])
         self.assertEqual(history,2)
 
+    def test_catalog_rechecks_active_reference_before_deletion(self):
+        with self.assertRaisesRegex(Exception,'当前生效版本'):
+            self.fleet.delete_package(self.active,require_inactive=True)
+        self.assertIsNotNone(self.fleet.package(self.active))
+        self.assertTrue((self.packages/(self.active+'.zip')).exists())
+
     def test_inflight_old_version_never_enter_delete_list(self):
         with self.fleet.db() as d:
             d.execute('''INSERT INTO guest_tasks(id,vm_id,package_id,status,created_at)
