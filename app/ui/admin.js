@@ -133,7 +133,7 @@ function renderTemplateBuilds(){
       actions.append(btn('关机后发布到正式模板候选库','primary small',async()=>{
         if(!confirm('确认模板已完成必要 Windows/OOBE 配置、Sysprep /generalize /shutdown，并且没有运行或挂起，也已断开安装 ISO？\n\n系统会完整克隆到正式模板目录，只生成待人工封存的候选记录，不修改旧模板或任何客户机。'))return;
         try{
-          await request('/api/template-builds/'+encodeURIComponent(b.id)+'/publish','POST',{});
+          await request('/api/template-builds/'+encodeURIComponent(b.id)+'/publish','POST',{confirm_sysprep_shutdown:true,confirm_iso_removed:true,confirm_preserve_originals:true});
           toast('发布候选模板已排队，可在制作列表查看状态');await refresh();
         }catch(e){toast('发布失败：'+e.message,true);}
       }));
