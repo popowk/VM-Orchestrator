@@ -119,7 +119,7 @@ class CleanupManager:
 
     def scan(self) -> dict:
         self._check_idle()
-        items, protected = [], []
+        items, protected, missing_records = [], [], []
         now = time.time()
         updates = self.root / 'data' / 'updates'
         current = (self.root / 'VERSION').read_text(encoding='utf-8-sig').strip() if (self.root / 'VERSION').exists() else ''
@@ -267,7 +267,7 @@ class CleanupManager:
                 rows = [dict(row) for row in d.execute(
                     "SELECT job_id,vm_id,backup_path,status,backup_deleted_at "
                     "FROM vm_reinstalls WHERE status='SUCCEEDED' AND "
-                    "backup_deleted_at IS NULL AND backup_path IS NOT NULL ORDER BY completed_at DESC")]
+                    "backup_deleted_at IS NULL AND backup_missing_at IS NULL AND backup_path IS NOT NULL ORDER BY completed_at DESC")]
             for row in rows[:1000]:
                 path = Path(row['backup_path'])
                 vm = self.store.get_vm(row['vm_id'])
@@ -275,8 +275,20 @@ class CleanupManager:
                 try:
                     if not vm or vm['state'] != 'READY' or not vm['vmx_path']:
                         raise CleanupError('Current VM is not in READY state')
-                    if path != expected or not path.exists():
-                        raise CleanupError('Backup path does not match recorded reinstall directory')
+                    if path != expected:
+                        raise CleanupError('备份路径与当前虚拟机重装记录不匹配，禁止自动处理')
+                    if not path.exists():
+                        # The audit row is real but the filesystem copy is gone.
+                        # Preview a database-only acknowledgement, never a
+                        # deletable folder. Preserve audit history.
+                        missing_records.append({
+                            'id': 'missing:' + row['job_id'],
+                            'vm_id': row['vm_id'], 'job_id': row['job_id'],
+                            'path': str(path),
+                            'reason': '重装备份文件缺失；只可标记数据库状态，不会释放磁盘空间',
+                            'bytes': 0
+                        })
+                        continue
                     current_vmx = Path(vm['vmx_path'])
                     if current_vmx != self.vms_root / vm['name'] / (vm['name'] + '.vmx') or not current_vmx.is_file():
                         raise CleanupError('Current replacement VM is missing or has an unexpected path')
@@ -292,9 +304,48 @@ class CleanupManager:
                                         total, files, path.stat().st_mtime, True))
                 except Exception as exc:
                     protected.append({'path': str(path), 'reason': str(exc)[:180]})
-        return {'items': items, 'protected': protected[:300], 'protected_count': len(protected),
+            # Unknown folders under the dedicated backup root are never
+            # deletable merely because their names look like backup IDs.
+            # Report as protected for manual audit, not cleanup candidates.
+            known={str(Path(row['backup_path'])) for row in rows}
+            try:
+                for candidate in list(backup_root.iterdir())[:300]:
+                    if str(candidate) not in known:
+                        protected.append({'path': str(candidate),
+                                          'reason': '重装备份目录未关联当前成功重装记录，禁止直接删除'})
+            except OSError as exc:
+                protected.append({'path': str(backup_root),'reason': str(exc)[:150]})
+        return {'items': items, 'protected': protected[:300],
+                'protected_count': len(protected),
+                'missing_records': missing_records,
+                'missing_count': len(missing_records),
                 'total_bytes': sum(x['bytes'] for x in items),
                 'reinstall_backups': sum(x['kind'] == 'reinstall_backup' for x in items)}
+
+    def acknowledge_missing(self, job_ids: list[str]) -> dict:
+        """Mark missing backup records for audit; NEVER delete files or audit rows."""
+        if not job_ids or len(job_ids)>50 or len(set(job_ids))!=len(job_ids):
+            raise CleanupError('请选择 1–50 条不重复的失效备份记录')
+        self._check_idle()
+        scan=self.scan()
+        records={x['job_id']:x for x in scan['missing_records']}
+        if any(job not in records for job in job_ids):
+            raise CleanupError('待确认的失效记录已变化，请重新扫描')
+        # Double-check all paths before changing any database state.
+        for job in job_ids:
+            item=records[job]
+            path=Path(item['path'])
+            if path.exists() or path.is_symlink():
+                raise CleanupError('备份目录重新出现；停止同步数据库状态')
+            vm=self.store.get_vm(item['vm_id'])
+            expected=self.vms_root / '.vmo-reinstall-backups' / (
+                (vm['name'] if vm else '')+'-'+job)
+            if not vm or path!=expected:
+                raise CleanupError('备份路径或虚拟机状态发生变化，拒绝修改')
+        for job in job_ids:
+            item=records[job]
+            self.fleet.mark_reinstall_backup_missing(job,item['path'])
+        return {'acknowledged':job_ids,'files_deleted':0,'bytes_released':0}
 
     def delete(self, requested: list[dict], *, confirm_backups: bool = False) -> dict:
         if not requested or len(requested) > 50:
