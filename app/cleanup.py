@@ -372,7 +372,8 @@ class CleanupManager:
                 'missing_records': missing_records,
                 'missing_count': len(missing_records),
                 'total_bytes': sum(x['bytes'] for x in items),
-                'reinstall_backups': sum(x['kind'] == 'reinstall_backup' for x in items)}
+                'reinstall_backups': sum(x['kind'] == 'reinstall_backup' for x in items),
+                'old_software_packages': sum(x['kind'] == 'old_software_package' for x in items)}
 
     def acknowledge_missing(self, job_ids: list[str]) -> dict:
         """Mark missing backup records for audit; NEVER delete files or audit rows."""
