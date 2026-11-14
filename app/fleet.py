@@ -63,6 +63,19 @@ class FleetStore:
             if 'phase' not in cols: d.execute("ALTER TABLE guest_tasks ADD COLUMN phase TEXT NOT NULL DEFAULT ''")
             if 'options_json' not in cols: d.execute("ALTER TABLE guest_tasks ADD COLUMN options_json TEXT NOT NULL DEFAULT '{}'")
             if 'progress_at' not in cols: d.execute('ALTER TABLE guest_tasks ADD COLUMN progress_at TEXT')
+            if 'enrollment_agent_id' not in cols:
+                d.execute('ALTER TABLE guest_tasks ADD COLUMN enrollment_agent_id TEXT')
+                # Preserve dedup for currently enrolled guests when historical
+                # tasks were created after the current registration. Earlier
+                # tasks belong to an older OS generation and remain unmatched.
+                d.execute('''UPDATE guest_tasks SET enrollment_agent_id=(
+                    SELECT agent_id FROM guest_enrollment AS e
+                    WHERE e.vm_id=guest_tasks.vm_id
+                      AND e.revoked_at IS NULL
+                      AND e.registered_at <= guest_tasks.created_at)
+                    WHERE enrollment_agent_id IS NULL''')
+            d.execute('''CREATE INDEX IF NOT EXISTS guest_tasks_enrollment_package
+                ON guest_tasks(vm_id,enrollment_agent_id,package_id)''')
             enrollment_columns={r[1] for r in d.execute('PRAGMA table_info(guest_enrollment)')}
             if 'smbios_uuid' not in enrollment_columns:
                 d.execute('ALTER TABLE guest_enrollment ADD COLUMN smbios_uuid TEXT')
@@ -196,7 +209,7 @@ class FleetStore:
         with self.db() as d:
             return [dict(r) for r in d.execute("SELECT * FROM update_packages WHERE filename != 'approved-plugin-command' AND deleted_at IS NULL ORDER BY uploaded_at DESC")]
 
-    def delete_package(self, package_id: str):
+    def delete_package(self, package_id: str, *, require_inactive: bool = False):
         """Remove an approved ZIP but retain immutable update-task audit history.
 
         Refuse deletion if this artifact is pinned to a customer self-service
@@ -218,6 +231,10 @@ class FleetStore:
                 (package_id,)).fetchone()
             if not row or row['filename']=='approved-plugin-command':
                 raise FleetError('Update package does not exist')
+            if require_inactive and d.execute(
+                'SELECT 1 FROM portable_profiles WHERE active_package_id=? LIMIT 1',
+                (package_id,)).fetchone():
+                raise FleetError('清理时该软件包重新成为当前生效版本，禁止删除')
             if d.execute("SELECT 1 FROM guest_tasks WHERE package_id=? AND status IN ('QUEUED','CLAIMED','RUNNING','VERIFY_REQUIRED','UNKNOWN','TIMED_OUT') LIMIT 1",
                          (package_id,)).fetchone():
                 raise FleetError('更新包仍有正在执行的任务，请先等待完成')
@@ -250,7 +267,7 @@ class FleetStore:
         with self.db() as d:
             d.execute('BEGIN IMMEDIATE')  # serialize with package revocation
             vm = d.execute('SELECT state FROM vms WHERE id=?', (vm_id,)).fetchone()
-            agent = d.execute('SELECT revoked_at,reported_json,last_seen FROM guest_enrollment WHERE vm_id=?', (vm_id,)).fetchone()
+            agent = d.execute('SELECT agent_id,revoked_at,reported_json,last_seen FROM guest_enrollment WHERE vm_id=?', (vm_id,)).fetchone()
             pack = d.execute('SELECT id,product FROM update_packages WHERE id=? AND deleted_at IS NULL', (package_id,)).fetchone()
             busy = d.execute("SELECT id FROM guest_tasks WHERE vm_id=? AND status IN ('QUEUED','CLAIMED','RUNNING')", (vm_id,)).fetchone()
             if not vm or vm['state'] != 'READY' or not agent or agent['revoked_at'] or not pack or busy:
@@ -263,8 +280,8 @@ class FleetStore:
             if is_auto and not active['auto_deploy']:
                 raise FleetError('自动推送已被管理员关闭')
             if is_auto and d.execute(
-                    'SELECT 1 FROM guest_tasks WHERE vm_id=? AND package_id=? LIMIT 1',
-                    (vm_id,package_id)).fetchone():
+                    'SELECT 1 FROM guest_tasks WHERE vm_id=? AND package_id=? AND enrollment_agent_id=? LIMIT 1',
+                    (vm_id,package_id,agent['agent_id'])).fetchone():
                 raise FleetError('此版本已经向该机器下发过，自动模式不重复执行')
 
             # New updates are exclusively the server-reviewed portable ZIP catalog.
@@ -303,8 +320,11 @@ class FleetStore:
             if not agent['last_seen'] or (datetime.now(timezone.utc)-datetime.fromisoformat(agent['last_seen'])).total_seconds() > 600:
                 raise FleetError('Guest Agent 心跳已超出 10 分钟；请先恢复自动心跳')
             id_ = str(uuid.uuid4())
-            d.execute("INSERT INTO guest_tasks(id,vm_id,package_id,status,created_at,options_json) VALUES(?,?,?,'QUEUED',?,?)",
-                      (id_,vm_id,package_id,now(),json.dumps(options or {},ensure_ascii=False)))
+            d.execute("""INSERT INTO guest_tasks
+                (id,vm_id,package_id,status,created_at,options_json,enrollment_agent_id)
+                VALUES(?,?,?,'QUEUED',?,?,?)""",
+                (id_,vm_id,package_id,now(),json.dumps(options or {},ensure_ascii=False),
+                 agent['agent_id']))
         return id_
 
     def reconcile_auto_deploy(self, vm_id: str | None = None) -> dict:
@@ -370,6 +390,16 @@ class FleetStore:
             # claimed, rather than accidentally executing historical scripts.
             # Previously CLAIMED/RUNNING tasks retain their audit outcomes.
             while task:
+                current=d.execute('SELECT agent_id,revoked_at FROM guest_enrollment WHERE vm_id=?',
+                                  (vm_id,)).fetchone()
+                if (not current or current['revoked_at'] or
+                        task['enrollment_agent_id']!=current['agent_id']):
+                    d.execute("""UPDATE guest_tasks SET status='CANCELLED',
+                        message='任务属于旧 Windows 注册代，不允许新系统执行',
+                        completed_at=? WHERE id=? AND status='QUEUED'""",
+                        (now(),task['id']))
+                    task=d.execute("SELECT * FROM guest_tasks WHERE vm_id=? AND status='QUEUED' ORDER BY created_at LIMIT 1",(vm_id,)).fetchone()
+                    continue
                 pkg=d.execute('SELECT * FROM update_packages WHERE id=?',(task['package_id'],)).fetchone()
                 if (pkg and task['kind']=='UPDATE' and
                     re.fullmatch(r'portable-p-[0-9a-f]{20}',pkg['product'])):

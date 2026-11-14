@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.61"></script>
+<script src="/ui/app-route-recover.js?v=1.4.62"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.61">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.62">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.61" defer></script>
+<script src="/ui/admin.js?v=1.4.62" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -113,6 +113,22 @@
       <section class="panel"><div class="panel-head"><div><h2>虚拟机</h2><p>开关机 · 关机快照（每台最多 3 个）· 删除虚拟机</p></div><span class="muted" id="vmCount"></span></div><div id="vmList" class="vm-grid"></div></section>
     </section>
     <section class="page" id="page-templates">
+      <section class="panel">
+        <div class="panel-head"><div><h2>独立黄金模板制作区</h2><p>制作文件独立保存在 D:\VMware\Template-Build；现有正式模板 D:\VMware\Template 和客户机不移动、不覆盖。支持从 Windows ISO 新建、现有已封存模板完整克隆。</p></div><span id="templateBuildRoot" class="muted"></span></div>
+        <form id="templateBuildForm" class="form-grid">
+          <label>制作名称（新目录）<input id="templateBuildName" maxlength="48" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" placeholder="Win10-New-Build-01" required></label>
+          <label>制作方式<select id="templateBuildMode"><option value="iso">Windows ISO 全新创建</option><option value="clone">从现有黄金模板完整克隆</option></select></label>
+          <label class="wide" id="templateBuildIsoLabel">Windows 安装 ISO 绝对路径<input id="templateBuildIso" maxlength="600" placeholder="D:\ISO\Win10.iso"></label>
+          <label class="wide" id="templateBuildSourceLabel" hidden>选择已封存的黄金模板<select id="templateBuildSource"><option value="">请选择正式黄金模板</option></select></label>
+          <label>内存（MB）<input id="templateBuildMemory" type="number" min="2048" max="32768" step="4" value="8192"></label>
+          <label>CPU 核心<input id="templateBuildCpus" type="number" min="1" max="16" value="4"></label>
+          <label>系统盘（GB）<input id="templateBuildDisk" type="number" min="40" max="1024" value="80"></label>
+          <p class="muted wide">制作过程中可在 VMware 中手动启动、安装 Windows、安装 OOBE/Guest 工具及执行 Sysprep。新 ISO 模板默认无网络连接，需你按隔离规则自行启用。克隆源不会修改。制作完成并关机、移除安装 ISO 后才能发布成正式模板的“候选版本”；仍须单独人工封存才能用于客户机。</p>
+          <div class="form-submit"><button type="submit" class="btn primary">创建独立制作虚拟机</button></div>
+        </form>
+        <div id="templateBuildList" class="template-list"><p class="muted">暂无模板制作任务</p></div>
+        <p class="muted">宿主机制作工具：<code>template_build\Export-GuestToolkit.ps1</code>；可将独立 Guest 工具包复制到 BUILD Windows 内部，再执行 OOBE 安装和 Sysprep 封存。</p>
+      </section>
       <section class="panel"><div class="panel-head"><div><h2>现有黄金模板</h2><p>已封存的模板才能完整克隆</p></div></div><div id="templateList" class="template-list"></div></section>
       <section class="panel"><div class="panel-head"><div><h2>扫描本地黄金模板</h2><p>自动寻找模板目录及其一级子目录内的 .vmx；只读扫描，不会自动修改或封存。</p></div><button class="btn ghost" id="scanTemplatesBtn" type="button">扫描模板目录</button></div><div id="discoveredTemplates" class="template-list"><p class="muted">点击「扫描模板目录」选择要登记的模板。</p></div></section>
       <section class="panel"><div class="panel-head"><div><h2>登记新模板</h2><p>登记不会执行 Sysprep，也不会修改原始 VMX</p></div></div>
@@ -162,6 +178,10 @@
           <button type="button" class="btn danger" id="cleanupDeleteBtn">清理选中项目</button>
         </div>
         <p id="cleanupSummary" class="muted" role="status">尚未扫描</p>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>历史软件更新包（approved_packages）</h2><p>只展示已失效且不被当前软件、客户自助操作或进行中更新任务引用的 ZIP；需单独手动勾选、再次确认，删除时核对 SHA-256 并保留历史审计。</p></div></div>
+        <div id="cleanupOldPackages" class="template-list"></div>
       </section>
       <section class="panel">
         <div class="panel-head"><div><h2>程序临时文件与旧更新备份</h2><p>升级完成即可识别废弃解压目录；脚本/日志/非发行版文件标记原因、默认不选，最近两份回滚备份强制保留。</p></div></div>

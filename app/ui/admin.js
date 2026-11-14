@@ -17,7 +17,7 @@ function VMOConnectEvents(){
 }
 function VMOCloseEvents(){if(VMOEventSource){VMOEventSource.close();VMOEventSource=null;}}
 const $ = id => document.getElementById(id);
-const state = { csrf:'', templates:[], vms:[], jobs:[], capabilities:null, viewingVm:null, activePage:'overview', busy:false, watched:new Set(), defaultTemplate:null, guests:[], packages:[], portableProfiles:[], updateTasks:[], reinstalls:[], reinstallVm:null, packageSelections:{}, jobsPage:1, updatePage:1, jobsPaged:{items:[],page:1,pages:1,total:0}, updatesPaged:{items:[],page:1,pages:1,total:0} };
+const state = { csrf:'', templates:[], vms:[], jobs:[], capabilities:null, viewingVm:null, activePage:'overview', busy:false, watched:new Set(), defaultTemplate:null, guests:[], packages:[], portableProfiles:[], updateTasks:[], reinstalls:[], templateBuilds:[], templateBuildRoot:'', reinstallVm:null, packageSelections:{}, jobsPage:1, updatePage:1, jobsPaged:{items:[],page:1,pages:1,total:0}, updatesPaged:{items:[],page:1,pages:1,total:0} };
 const pages = { overview:'管理概览', vms:'虚拟机管理', templates:'黄金模板', updates:'软件更新', jobs:'任务记录', remote:'远程运维', clients:'思博客户服务', system:'系统更新', cleanup:'空间清理' };
 const statusName = { READY:'就绪', CREATING:'克隆中', ERROR:'异常', DELETING:'删除中', REINSTALLING:'重装中', REINSTALL_ERROR:'重装异常', DELETE_ERROR:'删除失败', SEALED_ATTESTED:'已封存', CANDIDATE:'待确认', ARCHIVED:'已归档', FILES_PURGING:'磁盘清理异常', FILES_DELETED:'文件已清理（保留历史）', POWERED_ON:'运行中', POWERED_OFF:'已关机', SUSPENDED:'挂起', UNKNOWN:'未知', QUEUED:'排队中', RUNNING:'执行中', SUCCEEDED:'成功', VERIFY_REQUIRED:'已执行，待版本核验', FAILED:'失败' };
 function el(tag, cls='', text='') { const v=document.createElement(tag); if(cls)v.className=cls; if(text!==undefined && text!==null)v.textContent=String(text); return v; }
@@ -57,17 +57,17 @@ function navigate(page){
  else refresh();
 }
 async function refresh(){if(state.busy || !state.csrf)return;state.busy=true; try{
-  const [tpl,vms,jobs,caps,defaults,guests,packages,profiles,updatesPaged,reinstalls,jobsPaged] = await Promise.all([
+  const [tpl,vms,jobs,caps,defaults,guests,packages,profiles,updatesPaged,reinstalls,jobsPaged,buildData] = await Promise.all([
     request('/api/templates'),request('/api/vms'),request('/api/jobs'),request('/api/host/capabilities'),
     request('/api/fleet/default-template'),request('/api/fleet/guests'),request('/api/fleet/packages'),request('/api/fleet/portable/profiles'),
     request(`/api/fleet/updates?paged=true&page=${state.updatePage}&page_size=15`),request('/api/fleet/reinstalls'),
-    request(`/api/jobs?paged=true&page=${state.jobsPage}&page_size=20`)]);
+    request(`/api/jobs?paged=true&page=${state.jobsPage}&page_size=20`),request('/api/template-builds')]);
   state.templates=tpl;state.vms=vms;state.jobs=jobs;state.capabilities=caps;
-  state.defaultTemplate=defaults.template_id;state.guests=guests;state.packages=packages;state.portableProfiles=profiles;state.updateTasks=updatesPaged.items;state.updatesPaged=updatesPaged;state.updatePage=updatesPaged.page;state.jobsPaged=jobsPaged;state.jobsPage=jobsPaged.page;state.reinstalls=reinstalls;
+  state.defaultTemplate=defaults.template_id;state.guests=guests;state.packages=packages;state.portableProfiles=profiles;state.updateTasks=updatesPaged.items;state.updatesPaged=updatesPaged;state.updatePage=updatesPaged.page;state.jobsPaged=jobsPaged;state.jobsPage=jobsPaged.page;state.reinstalls=reinstalls;state.templateBuilds=buildData.builds||[];state.templateBuildRoot=buildData.root||'';
   // Only redraw the page currently visible; never replace hidden forms,
   // expanded task details or a customer application viewer on a timer tick.
   if(state.activePage==='overview')renderOverview();
-  else if(state.activePage==='templates')renderTemplates();
+  else if(state.activePage==='templates'){renderTemplates();renderTemplateBuilds();}
   else if(state.activePage==='vms'){renderTemplates();renderVms();}
   else if(state.activePage==='jobs')renderJobs();
   else if(state.activePage==='updates')renderFleet();
@@ -108,6 +108,41 @@ async function refreshHostMetrics(){
     details.append(el('div','vmo-host-disk-row','宿主机：'+(m.host||'未知')+' · 已运行约 '+Math.floor((m.uptime_seconds||0)/3600)+' 小时'));
     stamp.textContent='采样：'+VMO_BJT(m.sample_time*1000);
   }catch(e){grid.replaceChildren(el('p','muted','读取失败：'+e.message));details.replaceChildren();stamp.textContent='获取失败';}
+}
+
+function renderTemplateBuilds(){
+  const list=$('templateBuildList'),root=$('templateBuildRoot'),sel=$('templateBuildSource');
+  if(!list||!root||!sel)return;
+  root.textContent=state.templateBuildRoot;
+  const previous=sel.value;sel.replaceChildren(new Option('请选择已封存的黄金模板',''));
+  for(const t of state.templates.filter(x=>x.status==='SEALED_ATTESTED'))
+    sel.add(new Option(t.name,t.id));
+  if([...sel.options].some(x=>x.value===previous))sel.value=previous;
+  list.replaceChildren();
+  const labels={CREATING:'制作中',READY:'待操作/待封存',
+    PUBLISHING:'发布到正式模板库中',PUBLISHED_CANDIDATE:'已发布候选模板',
+    FAILED_REVIEW:'失败，保留文件待人工核实',
+    INTERRUPTED:'任务中断，保留文件待人工核实'};
+  for(const b of state.templateBuilds){
+    const row=el('div','template-card'),info=el('div'),actions=el('div');
+    info.append(el('strong','',b.name+' · '+(labels[b.status]||b.status)),
+       el('small','',b.vmx_path),
+       el('small','',b.mode==='iso'?'ISO 全新制作':'从现有黄金模板完整克隆'));
+    if(b.error)info.append(el('small','',b.error));
+    if(b.status==='READY'){
+      actions.append(btn('关机后发布到正式模板候选库','primary small',async()=>{
+        if(!confirm('确认模板已完成必要 Windows/OOBE 配置、Sysprep /generalize /shutdown，并且没有运行或挂起，也已断开安装 ISO？\n\n系统会完整克隆到正式模板目录，只生成待人工封存的候选记录，不修改旧模板或任何客户机。'))return;
+        try{
+          await request('/api/template-builds/'+encodeURIComponent(b.id)+'/publish','POST',{confirm_sysprep_shutdown:true,confirm_iso_removed:true,confirm_preserve_originals:true});
+          toast('发布候选模板已排队，可在制作列表查看状态');await refresh();
+        }catch(e){toast('发布失败：'+e.message,true);}
+      }));
+    }
+    if(b.official_template_id)info.append(el('small','','正式模板 ID：'+
+       b.official_template_id+'；请在上方完成人工封存确认'));
+    row.append(info,actions);list.append(row);
+  }
+  if(!list.childElementCount)list.append(el('p','muted','暂无模板制作项目。'));
 }
 
 function renderOverview(){
@@ -752,6 +787,36 @@ window.addEventListener('DOMContentLoaded',async()=>{
   if(unattended && !(state.templates.find(t=>t.id===template_id)?.oobe_bootstrap_version>=2))return toast('所选模板未安装 V1.2 Administrator OOBE 引导，请选择新版封存模板或取消无人值守',true);
   if(!confirm(`确认从已封存模板完整克隆「${name}」？\n将占用新的虚拟磁盘空间。${unattended?'将创建每台独立 OOBE ISO 与随机密码；Windows 是否读取 ISO 需要实机验证。':''}${autoStart?'完成后将自动开机。':'完成后保持关机。'}`))return;
   try{await submitJob('/api/vms','POST',{name,template_id,customer_ref,start_after_clone:autoStart,enable_screen:screen,unattended_oobe:unattended});$('cloneName').value='';navigate('jobs');}catch(e){toast(e.message,true);}
+ });
+ function templateBuildModeChanged(){
+   const clone=$('templateBuildMode').value==='clone';
+   $('templateBuildIsoLabel').hidden=clone;
+   $('templateBuildSourceLabel').hidden=!clone;
+   $('templateBuildIso').required=!clone;
+   $('templateBuildSource').required=clone;
+ }
+ $('templateBuildMode').addEventListener('change',templateBuildModeChanged);
+ templateBuildModeChanged();
+ $('templateBuildForm').addEventListener('submit',async ev=>{
+   ev.preventDefault();
+   const name=$('templateBuildName').value.trim(),mode=$('templateBuildMode').value;
+   const payload={name,mode,
+      iso_path:mode==='iso'?$('templateBuildIso').value.trim():'',
+      source_template_id:mode==='clone'?$('templateBuildSource').value:'',
+      memory_mb:Number($('templateBuildMemory').value),
+      cpus:Number($('templateBuildCpus').value),
+      disk_gb:Number($('templateBuildDisk').value)};
+   if(!confirm('创建独立制作虚拟机 '+name+'？\n'+
+      (mode==='iso'?'使用 ISO 创建新 Windows 虚拟磁盘。':'从已封存模板完整克隆，不修改来源文件。')+
+      '\n制作目录：'+state.templateBuildRoot+'\n不会覆盖已有正式模板或客户机。'))return;
+   const button=$('templateBuildForm').querySelector('button[type="submit"]');
+   button.disabled=true;
+   try{
+     await request('/api/template-builds','POST',payload);
+     toast('模板制作任务已排队');$('templateBuildName').value='';
+     await refresh();
+   }catch(e){toast('制作任务创建失败：'+e.message,true);}
+   finally{button.disabled=false;}
  });
  $('scanTemplatesBtn').addEventListener('click',scanTemplates);
  $('templateForm').addEventListener('submit',async ev=>{ev.preventDefault();try{await request('/api/templates','POST',{name:$('templateName').value.trim(),vmx_path:$('templatePath').value.trim()});$('templateForm').reset();toast('模板已登记，还需要完成封存确认');await refresh();}catch(e){toast(e.message,true);}});
@@ -1698,11 +1763,11 @@ window.VMOSelfService=(()=>{
      if(!missing.childElementCount)
        missing.append(el('p','muted','没有待核实的缺失备份记录。'));
    }
-   const out=$('cleanupProgramItems'),vms=$('cleanupVMBackups'),blocked=$('cleanupProtected');
-   if(!out||!vms||!blocked)return;
-   out.replaceChildren();vms.replaceChildren();blocked.replaceChildren();
+   const out=$('cleanupProgramItems'),oldP=$('cleanupOldPackages'),vms=$('cleanupVMBackups'),blocked=$('cleanupProtected');
+   if(!out||!oldP||!vms||!blocked)return;
+   out.replaceChildren();oldP.replaceChildren();vms.replaceChildren();blocked.replaceChildren();
    const label={program_cache:'旧更新临时缓存',old_log:'旧更新日志',
-                code_backup:'历史代码备份',reinstall_backup:'重装 VM 备份',update_artifact:'更新脚本与日志',program_extra:'版本外文件',data_cache:'数据临时文件'};
+                code_backup:'历史代码备份',reinstall_backup:'重装 VM 备份',update_artifact:'更新脚本与日志',program_extra:'版本外文件',data_cache:'数据临时文件',old_software_package:'历史软件发布 ZIP'};
    function section(item,root){
      const row=el('div','template-card'),details=el('div');
      const head=el('label','check-row');
@@ -1715,7 +1780,8 @@ window.VMOSelfService=(()=>{
       if(item.reason)details.append(el('small','',item.reason));
      row.append(details);root.append(row);
    }
-   candidates.forEach(item=>section(item,item.kind==='reinstall_backup'?vms:out));
+   candidates.forEach(item=>section(item,item.kind==='reinstall_backup'?vms:item.kind==='old_software_package'?oldP:out));
+    if(!oldP.childElementCount)oldP.append(el('p','muted','没有可清理的旧版软件 ZIP；当前版本和被引用的包继续受保护。'));
    if(!out.childElementCount)out.append(el('p','muted','没有符合清理条件的程序文件。'));
    if(!vms.childElementCount)vms.append(el('p','muted','没有通过安全检查的已完成重装备份。'));
    for(const p of (data.protected||[])){
@@ -1724,7 +1790,7 @@ window.VMOSelfService=(()=>{
    if(!blocked.childElementCount)blocked.append(el('p','muted','没有需要人工处理的候选项目。'));
    $('cleanupSummary').textContent='可检查 '+candidates.length+' 项，合计 '+fmt(data.total_bytes)+
        '；其中旧虚拟机备份 '+(data.reinstall_backups||0)+' 项，缺失记录 '+missingRecords.length+
-       ' 条，受保护 '+(data.protected_count||0)+' 项。缺失记录不占空间，确认后仅同步数据库状态。';
+       ' 条，历史软件 ZIP '+(data.old_software_packages||0)+' 项，受保护 '+(data.protected_count||0)+' 项。';
  }
  async function scan(){
    if(scanning||deleting)return;
@@ -1739,9 +1805,12 @@ window.VMOSelfService=(()=>{
    if(!keys.length)return toast('请先勾选需要清理的项目',true);
    const choices=keys.map(k=>candidates.find(x=>x.id===k)).filter(Boolean);
    const backups=choices.filter(x=>x.kind==='reinstall_backup');
+   const packages=choices.filter(x=>x.kind==='old_software_package');
    const bytes=choices.reduce((x,y)=>x+y.bytes,0);
    if(!confirm('即将永久清理 '+choices.length+' 项，约 '+fmt(bytes)+
               '。已删除的数据不能恢复。是否继续？'))return;
+   if(packages.length&&!confirm('你选择了 '+packages.length+
+     ' 个历史软件 ZIP。已核实当前未生效、未被任务或自助操作引用。\n删除后不能再次部署旧版，执行前将复核数据库及 SHA-256，重装/更新历史保留。确定永久删除？'))return;
    if(backups.length&&!confirm('你单独标记了 '+backups.length+
               ' 份旧虚拟机完整备份；它们可能包含旧系统、快照和客户文件。确认永久删除？'))return;
    if(prompt('请输入“永久清理”确认此不可撤销的操作：','')!=='永久清理')return;
@@ -1749,7 +1818,7 @@ window.VMOSelfService=(()=>{
    try{
      const result=await request('/api/system/cleanup/delete','POST',{
        confirm_phrase:'永久清理',confirm_backups:backups.length>0,
-       items:choices.map(x=>({id:x.id,fingerprint:x.fingerprint}))
+       items:choices.map(x=>({id:x.id,fingerprint:x.fingerprint,confirm_software:x.kind==='old_software_package'&&packages.length>0}))
      });
      toast('清理完成：'+(result.deleted||[]).length+' 项，约 '+fmt(result.deleted_bytes));
      await scanAfterDelete();

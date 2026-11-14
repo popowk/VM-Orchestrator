@@ -181,3 +181,12 @@ prevent a clean build with an unwired feature.
 软件更新正式 Release 源支持 GitHub 直连、公开 HTTPS 仓库镜像（如 https://git.wksite.cn/owner/repo）以及完整 URL 转发代理（如 https://gh-proxy.com/https://github.com/owner/repo）。直连使用 api.github.com，普通镜像依次尝试同站 /api/repos/... 和 /api/v1/repos/.../releases/latest，完整 URL 代理从代理域名访问 /https://api.github.com/repos/.../releases/latest；ZIP 下载同样走对应镜像/代理。不同代理支持能力不同；只有 Release API 返回兼容 JSON 且支持同仓库正式 ZIP 下载时，才能自动更新。
 后台会细分 DNS 解析失败、HTTPS 连接超时、TLS 证书错误、HTTP 403/404/429/502 和非 JSON API 响应，不再将所有错误显示成同一条。禁止 http、直接 IP、localhost、内网域名和解析到非公网 IP 的域名；每次 HTTPS 连接采用 DNS 验证并绑定公开 IP，TLS 校验原域名，重定向只能去已配置镜像域名或可信 GitHub CDN。为避免系统隐式代理绕过 IP 保护，Release 下载不读取操作系统 HTTP_PROXY 环境变量；需要走代理时请填写公开 HTTPS 代理网址。
 原有 ZIP 单顶层目录、启动文件、SHA-256、GitHub digest（如果有）、版本非降级、同版本不同 ZIP 阻止发布等校验保留。服务器激活后只有该软件原本已启用“自动推送全部客户机”才下发。自动检查默认关闭。
+
+
+## v1.4.62 — 独立黄金模板制作与新系统软件自动推送
+
+正式新增 template_build/ 工具目录和宿主机 D:\VMware\Template-Build 制作区：可在管理后台通过 ISO 新建 Windows 10 EFI 虚拟机/稀疏系统盘，或使用 VMware vmrun full-clone 复制现有已封存模板。制作区不与原正式模板 D:\VMware\Template、客户机 D:\VMware\Customers 重叠。制作工具 Export-GuestToolkit.ps1 在独立制作区导出 Guest OOBE/Sysprep/Agent V2 工具，供复制到 BUILD Windows；失败时保留现场，不删除源目录。人工完成配置和 Sysprep 关机、确认移除安装 ISO 后，可通过 VMware 完整克隆发布到新的正式模板候选目录；仅登记为 CANDIDATE，仍需后续人工封存与 OOBE 验证，旧模板和客户机不迁移、不覆盖。
+
+Guest Agent 软件自动推送按 vm_id + enrollment_agent_id + 当前软件包 ID 去重。新建和重装客户机的 Windows 独立注册后，即使原虚拟机 ID 曾成功更新同一软件，也会给新的 Agent 注册身份重新下发所有启用了自动推送的现行便携软件 ZIP。旧任务审计保留，新系统首次安装默认保持关闭；同一新系统不会因重复心跳反复安装。
+
+空间清理新增历史软件 ZIP 分类，扫描 D:\VMware\VM-Orchestrator\data\approved_packages 的非生效旧版本；包必须有数据库记录、没有活动或结果待确认的更新任务、没有客户自助操作引用，才作为人工勾选项显示。当前生效 ZIP、未知文件和被引用文件仍受保护。清理先预览并人工双确认；执行时重检 ZIP SHA-256 与数据库，调用原 FleetStore 删除流程，保留历史审计，不直接删除未知文件。
