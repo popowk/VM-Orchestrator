@@ -110,7 +110,12 @@ jobs:
           foreach ($file in @('scripts/host/Apply-GitHubUpdate.ps1',
                               'scripts/host/Test-GitHubUpdate.ps1',
                               'scripts/host/Control-VMOHost.ps1',
-                              'guest_agent/Portable-Processes.ps1')) {
+                              'guest_agent/Portable-Processes.ps1',
+                              'guest_agent/Install-GuestAgentV2.ps1',
+                              'scripts/guest/Install-OOBE-Bootstrap.ps1',
+                              'scripts/guest/Prepare-TemplateGuest.ps1',
+                              'scripts/guest/Seal-Win10Template.ps1',
+                              'template_build/Export-GuestToolkit.ps1')) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
