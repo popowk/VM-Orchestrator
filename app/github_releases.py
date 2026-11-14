@@ -55,6 +55,12 @@ class GitHubReleaseUpdater:
         with self._profile_guard:
             return self._profile_locks.setdefault(profile_id, threading.Lock())
 
+    def is_checking(self, profile_id: str) -> bool:
+        """Read-only in-process state for UI; does not touch stored result/tag."""
+        with self._profile_guard:
+            lane=self._profile_locks.get(profile_id)
+            return bool(lane and lane.locked())
+
     def check(self, profile_id: str, *, force: bool=False) -> dict:
         lock=self._profile_lock(profile_id)
         # Manual requests briefly wait for the same profile's in-flight
