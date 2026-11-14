@@ -1763,11 +1763,11 @@ window.VMOSelfService=(()=>{
      if(!missing.childElementCount)
        missing.append(el('p','muted','没有待核实的缺失备份记录。'));
    }
-   const out=$('cleanupProgramItems'),vms=$('cleanupVMBackups'),blocked=$('cleanupProtected');
-   if(!out||!vms||!blocked)return;
-   out.replaceChildren();vms.replaceChildren();blocked.replaceChildren();
+   const out=$('cleanupProgramItems'),oldP=$('cleanupOldPackages'),vms=$('cleanupVMBackups'),blocked=$('cleanupProtected');
+   if(!out||!oldP||!vms||!blocked)return;
+   out.replaceChildren();oldP.replaceChildren();vms.replaceChildren();blocked.replaceChildren();
    const label={program_cache:'旧更新临时缓存',old_log:'旧更新日志',
-                code_backup:'历史代码备份',reinstall_backup:'重装 VM 备份',update_artifact:'更新脚本与日志',program_extra:'版本外文件',data_cache:'数据临时文件'};
+                code_backup:'历史代码备份',reinstall_backup:'重装 VM 备份',update_artifact:'更新脚本与日志',program_extra:'版本外文件',data_cache:'数据临时文件',old_software_package:'历史软件发布 ZIP'};
    function section(item,root){
      const row=el('div','template-card'),details=el('div');
      const head=el('label','check-row');
@@ -1780,7 +1780,8 @@ window.VMOSelfService=(()=>{
       if(item.reason)details.append(el('small','',item.reason));
      row.append(details);root.append(row);
    }
-   candidates.forEach(item=>section(item,item.kind==='reinstall_backup'?vms:out));
+   candidates.forEach(item=>section(item,item.kind==='reinstall_backup'?vms:item.kind==='old_software_package'?oldP:out));
+    if(!oldP.childElementCount)oldP.append(el('p','muted','没有可清理的旧版软件 ZIP；当前版本和被引用的包继续受保护。'));
    if(!out.childElementCount)out.append(el('p','muted','没有符合清理条件的程序文件。'));
    if(!vms.childElementCount)vms.append(el('p','muted','没有通过安全检查的已完成重装备份。'));
    for(const p of (data.protected||[])){
@@ -1789,7 +1790,7 @@ window.VMOSelfService=(()=>{
    if(!blocked.childElementCount)blocked.append(el('p','muted','没有需要人工处理的候选项目。'));
    $('cleanupSummary').textContent='可检查 '+candidates.length+' 项，合计 '+fmt(data.total_bytes)+
        '；其中旧虚拟机备份 '+(data.reinstall_backups||0)+' 项，缺失记录 '+missingRecords.length+
-       ' 条，受保护 '+(data.protected_count||0)+' 项。缺失记录不占空间，确认后仅同步数据库状态。';
+       ' 条，历史软件 ZIP '+(data.old_software_packages||0)+' 项，受保护 '+(data.protected_count||0)+' 项。';
  }
  async function scan(){
    if(scanning||deleting)return;
@@ -1804,9 +1805,12 @@ window.VMOSelfService=(()=>{
    if(!keys.length)return toast('请先勾选需要清理的项目',true);
    const choices=keys.map(k=>candidates.find(x=>x.id===k)).filter(Boolean);
    const backups=choices.filter(x=>x.kind==='reinstall_backup');
+   const packages=choices.filter(x=>x.kind==='old_software_package');
    const bytes=choices.reduce((x,y)=>x+y.bytes,0);
    if(!confirm('即将永久清理 '+choices.length+' 项，约 '+fmt(bytes)+
               '。已删除的数据不能恢复。是否继续？'))return;
+   if(packages.length&&!confirm('你选择了 '+packages.length+
+     ' 个历史软件 ZIP。已核实当前未生效、未被任务或自助操作引用。\n删除后不能再次部署旧版，执行前将复核数据库及 SHA-256，重装/更新历史保留。确定永久删除？'))return;
    if(backups.length&&!confirm('你单独标记了 '+backups.length+
               ' 份旧虚拟机完整备份；它们可能包含旧系统、快照和客户文件。确认永久删除？'))return;
    if(prompt('请输入“永久清理”确认此不可撤销的操作：','')!=='永久清理')return;
@@ -1814,7 +1818,7 @@ window.VMOSelfService=(()=>{
    try{
      const result=await request('/api/system/cleanup/delete','POST',{
        confirm_phrase:'永久清理',confirm_backups:backups.length>0,
-       items:choices.map(x=>({id:x.id,fingerprint:x.fingerprint}))
+       items:choices.map(x=>({id:x.id,fingerprint:x.fingerprint,confirm_software:x.kind==='old_software_package'&&packages.length>0}))
      });
      toast('清理完成：'+(result.deleted||[]).length+' 项，约 '+fmt(result.deleted_bytes));
      await scanAfterDelete();
