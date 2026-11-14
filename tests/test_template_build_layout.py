@@ -44,7 +44,7 @@ class BuildLayoutTests(TestCase):
 
     def test_host_updater_overlays_only_tools(self):
         updater=(ROOT/'scripts'/'host'/'Apply-GitHubUpdate.ps1').read_text(encoding='utf-8-sig')
-        self.assertIn("$templateToolFiles = @('README.md','Export-GuestToolkit.ps1')",updater)
+        self.assertIn("$templateToolFiles = @('README.md','Export-GuestToolkit.ps1','00-Export-GuestToolkit.cmd')",updater)
         self.assertIn("Join-Path $Target 'template_build'",updater)
         self.assertIn("foreach ($tool in $templateToolFiles)",updater)
         folders=next(line for line in updater.splitlines() if line.startswith('$folders ='))
@@ -55,5 +55,6 @@ class BuildLayoutTests(TestCase):
         installer=(ROOT/'Install-All.ps1').read_text(encoding='utf-8-sig')
         self.assertIn("template_build\\README.md",installer)
         self.assertIn("template_build\\Export-GuestToolkit.ps1",installer)
+        self.assertIn("template_build\\00-Export-GuestToolkit.cmd",installer)
         self.assertIn("if ($relative -match '^(?i:template_build)",installer)
         self.assertIn("if ($relative -notin",installer)
