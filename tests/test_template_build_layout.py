@@ -14,10 +14,12 @@ class BuildLayoutTests(TestCase):
         self.assertEqual(settings.template_build_root,ROOT/'template_build')
 
     def test_export_identity_free_oobe_and_v2(self):
-        exporter=(ROOT/'template_build'/'Export-GuestToolkit.ps1').read_text(encoding='utf-8')
+        shim=(ROOT/'template_build'/'Export-GuestToolkit.ps1').read_text(encoding='utf-8')
+        exporter=(ROOT/'scripts'/'host'/'Export-GuestToolkit.ps1').read_text(encoding='utf-8')
         prepare=(ROOT/'scripts'/'guest'/'Prepare-TemplateGuest.ps1').read_text(encoding='utf-8')
         seal=(ROOT/'scripts'/'guest'/'Seal-Win10Template.ps1').read_text(encoding='utf-8')
-        self.assertIn('$DestinationRoot = $PSScriptRoot',exporter)
+        self.assertIn('scripts\\host\\Export-GuestToolkit.ps1',shim)
+        self.assertIn("Join-Path $projectRoot 'template_build'",exporter)
         self.assertNotIn("D:\\VMware\\Template-Build",exporter)
         self.assertIn('Prepare-TemplateGuest.ps1',exporter)
         self.assertNotIn('Inspect-Win10Template.ps1',exporter)
