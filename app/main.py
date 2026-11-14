@@ -948,7 +948,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
                         if payload.enabled else '自动推送已关闭，尚未领取的自动任务已取消。')}
 
     class GitHubSourceConfig(BaseModel):
-        url: str = Field(default='',max_length=220)
+        url: str = Field(default='',max_length=300)
         asset_name: str = Field(default='',max_length=180)
         enabled: bool = False
 

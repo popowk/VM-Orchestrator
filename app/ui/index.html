@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.60"></script>
+<script src="/ui/app-route-recover.js?v=1.4.61"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.60">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.61">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.60" defer></script>
+<script src="/ui/admin.js?v=1.4.61" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -144,7 +144,7 @@
           <div class="form-submit"><button type="submit" class="btn primary">上传并登记软件更新</button></div>
         </form>
         <div class="divider"></div>
-        <div class="panel-head"><div><h2>软件版本库、GitHub 更新源与下发</h2><p>先登记软件 ZIP 和启动文件，即可给此软件绑定公开 GitHub 仓库。开启后每 6 小时检查新的正式 Release；服务器校验通过后激活版本，并依照“自动推送全部客户机”开关决定是否下发。要求 Guest Agent v2.0.27+。</p></div></div>
+        <div class="panel-head"><div><h2>软件版本库、GitHub 更新源与下发</h2><p>先登记软件 ZIP 和启动文件，即可给此软件绑定公开 HTTPS 仓库或 GitHub 镜像地址。开启后每 6 小时检查新的正式 Release；服务器校验通过后激活版本，并依照“自动推送全部客户机”开关决定是否下发。要求 Guest Agent v2.0.27+。</p></div></div>
         <div id="packageList" class="software-package-list"></div>
         <p class="muted" id="portableReleaseHint">版本包默认收起，点击软件名称展开可选择客户机、批量下发或删除。</p>
       </section>
