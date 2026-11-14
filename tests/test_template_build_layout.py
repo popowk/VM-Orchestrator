@@ -41,3 +41,19 @@ class BuildLayoutTests(TestCase):
         source=(ROOT/'app'/'template_build.py').read_text(encoding='utf-8')
         self.assertIn('isolate_roots(root,templates_root,vms_root)',source)
         self.assertIn("self.store.add(record['name'],destination)",source)
+
+    def test_host_updater_overlays_only_tools(self):
+        updater=(ROOT/'scripts'/'host'/'Apply-GitHubUpdate.ps1').read_text(encoding='utf-8-sig')
+        self.assertIn("$templateToolFiles = @('README.md','Export-GuestToolkit.ps1')",updater)
+        self.assertIn("Join-Path $Target 'template_build'",updater)
+        self.assertIn("foreach ($tool in $templateToolFiles)",updater)
+        folders=next(line for line in updater.splitlines() if line.startswith('$folders ='))
+        self.assertNotIn("template_build",folders)
+        self.assertNotIn("Remove-Item -LiteralPath $toolRoot",updater)
+
+    def test_manual_installer_does_not_copy_build_disk(self):
+        installer=(ROOT/'Install-All.ps1').read_text(encoding='utf-8-sig')
+        self.assertIn("template_build\\README.md",installer)
+        self.assertIn("template_build\\Export-GuestToolkit.ps1",installer)
+        self.assertIn("if ($relative -match '^(?i:template_build)",installer)
+        self.assertIn("if ($relative -notin",installer)
