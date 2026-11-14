@@ -276,30 +276,3 @@ class TemplateBuildManager:
             self._status(key,'PUBLISHED_CANDIDATE',official_template_id=saved['id'])
         except Exception as exc:
             self._status(key,'FAILED_REVIEW','正式模板副本可能已部分生成，保留文件供人工核查：'+str(exc))
-,vmx_text):
-                raise TemplateBuildError('模板 VMX 仍引用 ISO 镜像；请在 VMware 中移除/清空 ISO 路径后再发布')
-            destination=self.templates_root/row['name']/(row['name']+'.vmx')
-            if destination.parent.exists() or destination.parent.is_symlink():
-                raise TemplateBuildError('正式模板目录同名项目已存在，不能覆盖')
-            d.execute("UPDATE template_builds SET status='PUBLISHING',updated_at=? WHERE id=?",
-                      (_now(),key))
-        self.executor.submit(self._publish_job,key)
-        return self.get(key)
-
-    def _publish_job(self, key: str) -> None:
-        record=self.get(key)
-        if not record:return
-        source=Path(record['vmx_path'])
-        destination=self.templates_root/record['name']/(record['name']+'.vmx')
-        try:
-            require_offline(source,self.vmrun)
-            if destination.parent.exists():
-                raise TemplateBuildError('正式模板目标目录已有文件')
-            self.vmrun.clone_full(source,destination,record['name'])
-            if not destination.is_file():
-                raise TemplateBuildError('发布克隆结束后找不到正式模板 VMX')
-            require_offline(destination,self.vmrun)
-            saved=self.store.add(record['name'],destination)
-            self._status(key,'PUBLISHED_CANDIDATE',official_template_id=saved['id'])
-        except Exception as exc:
-            self._status(key,'FAILED_REVIEW','正式模板副本可能已部分生成，保留文件供人工核查：'+str(exc))
