@@ -114,7 +114,7 @@
     </section>
     <section class="page" id="page-templates">
       <section class="panel">
-        <div class="panel-head"><div><h2>独立黄金模板制作区</h2><p>制作文件独立保存在 D:\VMware\Template-Build；现有正式模板 D:\VMware\Template 和客户机不移动、不覆盖。支持从 Windows ISO 新建、现有已封存模板完整克隆。</p></div><span id="templateBuildRoot" class="muted"></span></div>
+        <div class="panel-head"><div><h2>独立黄金模板制作区</h2><p>制作文件统一保存在 D:\VMware\VM-Orchestrator\template_build；现有正式模板 D:\VMware\Template 和客户机不移动、不覆盖。支持从 Windows ISO 新建、现有已封存模板完整克隆。</p></div><span id="templateBuildRoot" class="muted"></span></div>
         <form id="templateBuildForm" class="form-grid">
           <label>制作名称（新目录）<input id="templateBuildName" maxlength="48" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" placeholder="Win10-New-Build-01" required></label>
           <label>制作方式<select id="templateBuildMode"><option value="iso">Windows ISO 全新创建</option><option value="clone">从现有黄金模板完整克隆</option></select></label>
@@ -123,11 +123,11 @@
           <label>内存（MB）<input id="templateBuildMemory" type="number" min="2048" max="32768" step="4" value="8192"></label>
           <label>CPU 核心<input id="templateBuildCpus" type="number" min="1" max="16" value="4"></label>
           <label>系统盘（GB）<input id="templateBuildDisk" type="number" min="40" max="1024" value="80"></label>
-          <p class="muted wide">制作过程中可在 VMware 中手动启动、安装 Windows、安装 OOBE/Guest 工具及执行 Sysprep。新 ISO 模板默认无网络连接，需你按隔离规则自行启用。克隆源不会修改。制作完成并关机、移除安装 ISO 后才能发布成正式模板的“候选版本”；仍须单独人工封存才能用于客户机。</p>
+          <p class="muted wide">制作过程中在 VMware 安装 Windows、VMware Tools、系统级 Python 后，导出 Guest 工具包，在 BUILD Windows 内执行 Prepare-TemplateGuest.ps1（OOBE + Guest Agent V2），再执行 Seal-Win10Template.ps1（Sysprep）。新 ISO 模板默认无网络连接，需你按隔离规则自行启用。克隆源不会修改。制作完成并关机、移除安装 ISO 后才能发布成正式模板的“候选版本”；仍须单独人工封存才能用于客户机。</p>
           <div class="form-submit"><button type="submit" class="btn primary">创建独立制作虚拟机</button></div>
         </form>
         <div id="templateBuildList" class="template-list"><p class="muted">暂无模板制作任务</p></div>
-        <p class="muted">宿主机制作工具：<code>template_build\Export-GuestToolkit.ps1</code>；可将独立 Guest 工具包复制到 BUILD Windows 内部，再执行 OOBE 安装和 Sysprep 封存。</p>
+        <p class="muted">宿主机制作工具：<code>template_build\Export-GuestToolkit.ps1</code>；导出工具包到程序内 template_build 后复制进 BUILD Windows；先运行 Prepare-TemplateGuest.ps1，再运行 Seal-Win10Template.ps1。</p>
       </section>
       <section class="panel"><div class="panel-head"><div><h2>现有黄金模板</h2><p>已封存的模板才能完整克隆</p></div></div><div id="templateList" class="template-list"></div></section>
       <section class="panel"><div class="panel-head"><div><h2>扫描本地黄金模板</h2><p>自动寻找模板目录及其一级子目录内的 .vmx；只读扫描，不会自动修改或封存。</p></div><button class="btn ghost" id="scanTemplatesBtn" type="button">扫描模板目录</button></div><div id="discoveredTemplates" class="template-list"><p class="muted">点击「扫描模板目录」选择要登记的模板。</p></div></section>
