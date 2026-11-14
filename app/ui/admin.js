@@ -567,7 +567,7 @@ function renderFleet(){
      urlLabel.append(repoInput);
      const assetLabel=el('label','','ZIP 文件名（可留空自动选择唯一 ZIP）');
      const assetInput=el('input');assetInput.maxLength=180;assetInput.value=profile.github_asset||'';
-     assetInput.placeholder='可留空，或填写 Release 中确切的 ZIP 名称';
+     assetInput.placeholder='留空选唯一 ZIP；或填写 MyApp-v{version}-Windows-Full.zip';
      assetLabel.append(assetInput);
      const enabledRow=el('label','software-auto-control');
      const githubEnabled=document.createElement('input');githubEnabled.type='checkbox';
