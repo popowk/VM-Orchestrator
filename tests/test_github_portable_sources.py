@@ -58,6 +58,19 @@ class SourceTests(unittest.TestCase):
              get_release=lambda _:meta if meta is not None else self.data(),
              download=downloader or self.downloader)
 
+    def test_versioned_zip_asset_filename_placeholder(self):
+        self.assertEqual(
+            safe_asset_name('myapp-v{version}-Windows-Full.zip'),
+            'myapp-v{version}-Windows-Full.zip')
+        self.catalog.configure_github(
+            self.profile['id'], 'https://github.com/popowk/test-app', True,
+            'myapp-v{version}-Windows-Full.zip')
+        meta=self.data()
+        meta['assets'][0]['name']='myapp-v1.1.3-Windows-Full.zip'
+        meta['assets'][0]['browser_download_url']=meta['assets'][0]['browser_download_url'].replace(
+            'myapp-Windows-Full.zip','myapp-v1.1.3-Windows-Full.zip')
+        self.assertEqual(self.updater(meta).check(self.profile['id'])['state'],'published')
+
     def test_source_url_and_redirect_hosts_are_strict(self):
         self.assertEqual(canonical_repo('https://github.com/popowk/test-app/'),
                          'https://github.com/popowk/test-app')
