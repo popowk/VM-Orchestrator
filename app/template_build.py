@@ -109,6 +109,7 @@ class TemplateBuildManager:
         self.executor=executor
         self._guard=threading.Lock()
         self.root.mkdir(parents=True,exist_ok=True)
+        self.templates_root.mkdir(parents=True,exist_ok=True)
         if _is_reparse_point(self.root) or _is_reparse_point(self.templates_root):
             raise TemplateBuildError('模板目录不允许符号链接或 Windows Junction')
         with self._db() as d:
