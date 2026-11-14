@@ -20,7 +20,7 @@ NAME = f'VM-Orchestrator-v{VERSION}.zip'
 EXCLUDES = {'.git', '.github', 'tools', 'tests', 'data', 'dist', '__pycache__', '.venv', 'reports'}
 SECRETS = {'.env'}
 
-TEMPLATE_TOOLS = {'README.md', 'Export-GuestToolkit.ps1'}
+TEMPLATE_TOOLS = {'README.md', 'Export-GuestToolkit.ps1', '00-Export-GuestToolkit.cmd'}
 
 def excluded(rel: Path):
     # This workspace also holds BUILD VM disks and exported kits.
