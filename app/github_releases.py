@@ -55,10 +55,13 @@ def canonical_repo(url: str) -> str:
 
 def safe_asset_name(value: str) -> str:
     value=value.strip()
+    # Optional placeholders allow filename templates to survive new tags,
+    # e.g. dsh-fish-soul-bridage-v{version}-Windows-Full.zip.
+    example=value.replace('{version}','1.2.3').replace('{tag}','v1.2.3')
     if value and (len(value)>180 or
-                  not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]*\.zip',value,re.I)
-                  or '..' in value):
-        raise GitHubSourceError('ZIP 文件名必须是 Release 内的单个 ZIP 文件名，不能含目录、通配符或参数')
+                  not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]*\.zip',example,re.I)
+                  or '..' in example):
+        raise GitHubSourceError('ZIP 文件名只支持安全文件名及 {version}/{tag} 变量，不允许目录、通配符或参数')
     return value
 
 
@@ -171,7 +174,8 @@ class GitHubReleaseUpdater:
                 raise GitHubSourceError('GitHub 正式版本号不符合 VMO 软件版本格式')
             assets=data.get('assets') or []
             if p.get('github_asset'):
-                matches=[a for a in assets if a.get('name')==p['github_asset']]
+                expected_asset=p['github_asset'].replace('{version}',version).replace('{tag}',tag)
+                matches=[a for a in assets if a.get('name')==expected_asset]
             else:
                 matches=[a for a in assets if str(a.get('name','')).lower().endswith('.zip')]
             if len(matches)!=1:
@@ -240,8 +244,10 @@ class GitHubReleaseUpdater:
                 # may have disabled/reconfigured the policy in the meantime.
                 current=self.catalog.get(profile_id)
                 if (not current or current.get('github_repo')!=p['github_repo'] or
-                    (not force and not current.get('github_enabled'))):
-                    raise GitHubSourceError('更新源配置已更改，丢弃本次下载')
+                    current.get('github_asset')!=p.get('github_asset') or
+                    bool(current.get('github_enabled'))!=bool(p.get('github_enabled')) or
+                    current.get('active_package_id')!=p.get('active_package_id')):
+                    raise GitHubSourceError('软件版本或更新源配置已变化，丢弃本次下载')
                 package_id=str(uuid.uuid4())
                 approved=root/(package_id+'.zip')
                 os.replace(staged,approved)
