@@ -58,6 +58,66 @@ class SourceTests(unittest.TestCase):
              get_release=lambda _:meta if meta is not None else self.data(),
              download=downloader or self.downloader)
 
+    def test_release_lock_is_per_profile_not_global(self):
+        from threading import Event, Thread
+        from app.github_releases import GitHubReleaseUpdater
+        blocked=Event()
+        release=Event()
+        errors=[]
+        updater=GitHubReleaseUpdater(self.catalog,self.fleet)
+        first=self.profile['id']
+        second=profile_id_for('another-folder')
+        def fake_check(pid, *, force=False):
+            if pid==first:
+                blocked.set()
+                if not release.wait(5):
+                    raise RuntimeError('test timed out')
+            return {'state':'unchanged','profile_id':pid}
+        updater._check=fake_check
+        def background():
+            try: updater.check(first)
+            except Exception as exc: errors.append(exc)
+        thread=Thread(target=background)
+        thread.start()
+        try:
+            self.assertTrue(blocked.wait(2))
+            self.assertTrue(updater.is_checking(first))
+            self.assertEqual(updater.check(second,force=True)['state'],'unchanged')
+            self.assertFalse(updater.is_checking(second))
+            self.assertEqual(updater.check(first)['state'],'checking')
+        finally:
+            release.set()
+            thread.join(timeout=5)
+        self.assertFalse(errors)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(updater.is_checking(first))
+
+    def test_busy_does_not_replace_previous_version_or_error(self):
+        from threading import Event, Thread
+        updater=GitHubReleaseUpdater(self.catalog,self.fleet)
+        self.catalog.github_result(self.profile['id'],result='已是当前正式版本',tag='v1.1.3')
+        before=self.catalog.get(self.profile['id'])
+        started=Event()
+        done=Event()
+        def fake_check(pid, *, force=False):
+            started.set()
+            if not done.wait(5): raise RuntimeError('test wait timeout')
+            return {'state':'unchanged'}
+        updater._check=fake_check
+        th=Thread(target=lambda:updater.check(self.profile['id']))
+        th.start()
+        try:
+            self.assertTrue(started.wait(2))
+            self.assertEqual(updater.check(self.profile['id'])['state'],'checking')
+            after=self.catalog.get(self.profile['id'])
+            self.assertEqual(before['github_last_checked'],after['github_last_checked'])
+            self.assertEqual(after['github_last_tag'],'v1.1.3')
+            self.assertEqual(after['github_last_error'],'')
+        finally:
+            done.set()
+            th.join(timeout=5)
+        self.assertFalse(th.is_alive())
+
     def test_versioned_zip_asset_filename_placeholder(self):
         self.assertEqual(
             safe_asset_name('myapp-v{version}-Windows-Full.zip'),

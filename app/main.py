@@ -161,7 +161,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     build_root=settings.template_build_root or (Path(__file__).resolve().parent.parent / 'template_build')
     template_builder=TemplateBuildManager(build_root,templates_root,vms_root,
                                           settings.db_path,store,vmrun,runner.pool)
-    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.64',
+    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.65',
                   description='Local management of sealed templates and VMware Workstation VMs.')
 
     # One checked, opt-in source poll per process. The Host already forbids
@@ -976,7 +976,9 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
 
     @app.get('/api/fleet/portable/profiles', dependencies=[Depends(authorized)])
     def portable_program_profiles():
-        return portable_catalog.all()
+        return [{**profile,
+                 'github_checking':github_updater.is_checking(profile['id'])}
+                for profile in portable_catalog.all()]
 
     class AutoDeployConfig(BaseModel):
         enabled: bool

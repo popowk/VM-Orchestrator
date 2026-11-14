@@ -9,6 +9,18 @@ const VMO_BJT = (value, kind='datetime') => {
  return new Intl.DateTimeFormat('zh-CN',opts).format(d)+' (北京时间)';
 };
 window.VMOTime=VMO_BJT;
+// portable_profiles.github_last_checked comes from SQLite CURRENT_TIMESTAMP (UTC).
+// Treat timestamps without timezone as UTC, never as the browser's local time.
+function githubCheckedAt(value){
+ if(!value)return '未检查';
+ const raw=String(value).trim();
+ const iso=/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(raw)?raw.replace(' ','T')+'Z':raw;
+ const date=new Date(iso);
+ if(Number.isNaN(date.getTime()))return raw;
+ return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,
+   hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',
+   hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(date)+'（北京时间）';
+}
 let VMOEventSource=null;
 function VMOConnectEvents(){
  if(!window.EventSource||VMOEventSource||!state.csrf)return;
@@ -608,8 +620,9 @@ function renderFleet(){
      const githubEnabled=document.createElement('input');githubEnabled.type='checkbox';
      githubEnabled.checked=Boolean(profile.github_enabled);
      enabledRow.append(githubEnabled,el('span','','开启自动检查最新正式 Release（每6小时）'));
-     const status=el('p','muted','最近检查：'+(profile.github_last_checked||'未检查')+
+     const status=el('p','muted','最近检查：'+githubCheckedAt(profile.github_last_checked)+
        (profile.github_last_tag?' · '+profile.github_last_tag:'')+
+       (profile.github_checking?' · 当前正在检查或校验中':'')+
        (profile.github_last_error?' · 失败：'+profile.github_last_error:
          profile.github_last_result?' · '+profile.github_last_result:''));
      const actions=el('div','software-release-actions');
@@ -632,7 +645,22 @@ function renderFleet(){
        try{
          const result=await request('/api/fleet/portable/profiles/'+encodeURIComponent(profile.id)+
            '/github-check','POST',{});
-         status.textContent=(result.state==='published'?'发布成功':'当前无新版本')+
+         if(result.state==='checking'){
+           // The background scan is still checking THIS software; do not
+           // misleadingly say "no new version" or record it as a failure.
+           status.textContent=result.message||'此软件正在校验 Release，稍后刷新结果';
+           toast(status.textContent);check.blur();
+           const poll=async()=>{
+             if(state.activePage!=='updates'||!state.csrf)return;
+             await refresh();
+             if(state.portableProfiles.some(p=>p.id===profile.id&&p.github_checking)){
+               setTimeout(poll,10000);
+             }
+           };
+           setTimeout(poll,10000);
+           return;
+         }
+         status.textContent=(result.state==='published'?'发布成功':'已是当前正式版本')+
            ' · '+(result.tag||'')+
            (result.state==='published'?' · 已排队 '+(result.auto_queued||0)+' 台':'');
          toast(status.textContent);check.blur();await refresh();

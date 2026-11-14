@@ -45,15 +45,37 @@ class GitHubReleaseUpdater:
         self.fleet=fleet
         self._get_release=get_release or fetch_release
         self._download=download or download_asset
-        self._lock=threading.Lock()
+        # Each portable application has its own serialized Release lane.
+        # A 40+ MB download for one software must not block another profile's
+        # manual check. The guard only protects lock creation, never network I/O.
+        self._profile_guard=threading.Lock()
+        self._profile_locks: dict[str, threading.Lock]={}
+
+    def _profile_lock(self, profile_id: str) -> threading.Lock:
+        with self._profile_guard:
+            return self._profile_locks.setdefault(profile_id, threading.Lock())
+
+    def is_checking(self, profile_id: str) -> bool:
+        """Read-only in-process state for UI; does not touch stored result/tag."""
+        with self._profile_guard:
+            lane=self._profile_locks.get(profile_id)
+            return bool(lane and lane.locked())
 
     def check(self, profile_id: str, *, force: bool=False) -> dict:
-        if not self._lock.acquire(blocking=False):
-            raise GitHubSourceError('已有软件 Release 检查正在运行，请稍后重试')
+        lock=self._profile_lock(profile_id)
+        # Manual requests briefly wait for the same profile's in-flight
+        # background check. Do not hold an HTTP request indefinitely while a
+        # download / ZIP check is slow or a reverse proxy has a short timeout.
+        acquired=lock.acquire(timeout=8) if force else lock.acquire(blocking=False)
+        if not acquired:
+            # Important: a busy attempt is not a FAILED version check, and
+            # must not replace the last successful tag / result in SQLite.
+            return {'state':'checking','profile_id':profile_id,
+                    'message':'此软件 Release 正在后台检查或校验；未重复下载，请稍后刷新检查结果'}
         try:
             return self._check(profile_id,force=force)
         finally:
-            self._lock.release()
+            lock.release()
 
     def _check(self, profile_id: str, *, force: bool=False) -> dict:
         p=self.catalog.get(profile_id)
@@ -184,6 +206,8 @@ class GitHubReleaseUpdater:
                 continue
             try:
                 result=self.check(profile['id'])
+                if result['state']=='checking':
+                    continue
                 checked+=1
                 published+=int(result['state']=='published')
             except GitHubSourceError:
