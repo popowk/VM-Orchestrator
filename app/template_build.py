@@ -243,13 +243,39 @@ class TemplateBuildManager:
             if src!=self.root/row['name']/(row['name']+'.vmx'):
                 raise TemplateBuildError('来源路径不在隔离制作目录')
             require_offline(src,self.vmrun)
-            if row['mode']=='iso':
-                # An install ISO left mounted in an image can accidentally
-                # reinstall Windows at first customer boot. Disconnect it in
-                # VMware before publish.
-                vmx_text=src.read_text(encoding='utf-8-sig',errors='replace')
-                if re.search(r'(?im)^\s*ide1:0\.fileName\s*=\s*"[^"]+\.iso"\s*$',vmx_text):
-                    raise TemplateBuildError('Windows 安装 ISO 仍挂载；请在 VMware 中断开/移除 ISO 后再发布')
+            # Block installer media on every controller type, including an
+            # ISO inherited from a cloned existing template. Merely toggling
+            # startConnected off is not sufficient: detach it completely.
+            vmx_text=src.read_text(encoding='utf-8-sig',errors='replace')
+            if re.search(r'(?im)^\s*(?:ide|sata|scsi)\d+:\d+\.fileName\s*=\s*"[^"]+\.iso"\s*
+            destination=self.templates_root/row['name']/(row['name']+'.vmx')
+            if destination.parent.exists() or destination.parent.is_symlink():
+                raise TemplateBuildError('正式模板目录同名项目已存在，不能覆盖')
+            d.execute("UPDATE template_builds SET status='PUBLISHING',updated_at=? WHERE id=?",
+                      (_now(),key))
+        self.executor.submit(self._publish_job,key)
+        return self.get(key)
+
+    def _publish_job(self, key: str) -> None:
+        record=self.get(key)
+        if not record:return
+        source=Path(record['vmx_path'])
+        destination=self.templates_root/record['name']/(record['name']+'.vmx')
+        try:
+            require_offline(source,self.vmrun)
+            if destination.parent.exists():
+                raise TemplateBuildError('正式模板目标目录已有文件')
+            destination.parent.mkdir(parents=False,exist_ok=False)
+            self.vmrun.clone_full(source,destination,record['name'])
+            if not destination.is_file():
+                raise TemplateBuildError('发布克隆结束后找不到正式模板 VMX')
+            require_offline(destination,self.vmrun)
+            saved=self.store.add(record['name'],destination)
+            self._status(key,'PUBLISHED_CANDIDATE',official_template_id=saved['id'])
+        except Exception as exc:
+            self._status(key,'FAILED_REVIEW','正式模板副本可能已部分生成，保留文件供人工核查：'+str(exc))
+,vmx_text):
+                raise TemplateBuildError('模板 VMX 仍引用 ISO 镜像；请在 VMware 中移除/清空 ISO 路径后再发布')
             destination=self.templates_root/row['name']/(row['name']+'.vmx')
             if destination.parent.exists() or destination.parent.is_symlink():
                 raise TemplateBuildError('正式模板目录同名项目已存在，不能覆盖')
