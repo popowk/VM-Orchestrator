@@ -180,6 +180,10 @@
         <p id="cleanupSummary" class="muted" role="status">尚未扫描</p>
       </section>
       <section class="panel">
+        <div class="panel-head"><div><h2>历史软件更新包（approved_packages）</h2><p>只展示已失效且不被当前软件、客户自助操作或进行中更新任务引用的 ZIP；需单独手动勾选、再次确认，删除时核对 SHA-256 并保留历史审计。</p></div></div>
+        <div id="cleanupOldPackages" class="template-list"></div>
+      </section>
+      <section class="panel">
         <div class="panel-head"><div><h2>程序临时文件与旧更新备份</h2><p>升级完成即可识别废弃解压目录；脚本/日志/非发行版文件标记原因、默认不选，最近两份回滚备份强制保留。</p></div></div>
         <div id="cleanupProgramItems" class="template-list"></div>
       </section>
