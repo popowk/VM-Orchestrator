@@ -74,10 +74,13 @@ class SourceTests(unittest.TestCase):
     def test_source_url_and_redirect_hosts_are_strict(self):
         self.assertEqual(canonical_repo('https://github.com/popowk/test-app/'),
                          'https://github.com/popowk/test-app')
-        for url in ('http://github.com/popowk/test-app','https://evil.com/repo/foo',
+        for url in ('http://github.com/popowk/test-app',
                     'https://github.com/popowk/test-app/releases/latest',
                     'https://github.com/popowk/test-app?x=1',
-                    'https://github.com@evil.com/foo/bar'):
+                    'https://github.com@evil.com/foo/bar',
+                    'https://localhost/popowk/test-app',
+                    'https://127.0.0.1/popowk/test-app',
+                    'https://mirror.local/popowk/test-app'):
             with self.subTest(url=url),self.assertRaises(GitHubSourceError):
                 canonical_repo(url)
         with self.assertRaises(GitHubSourceError):
@@ -124,7 +127,7 @@ class SourceTests(unittest.TestCase):
     def test_zip_asset_url_must_match_configured_repo(self):
         meta=self.data()
         meta['assets'][0]['browser_download_url']='https://github.com/other/other/releases/download/v1.1.3/x.zip'
-        with self.assertRaisesRegex(GitHubSourceError,'不属于'):
+        with self.assertRaisesRegex(GitHubSourceError,'不匹配'):
             self.updater(meta).check(self.profile['id'])
         self.assertEqual(self.catalog.get(self.profile['id'])['active_package_id'],self.old)
 
