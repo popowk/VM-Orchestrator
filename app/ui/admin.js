@@ -559,11 +559,11 @@ function renderFleet(){
      autoRow.append(auto,autoText);
      body.append(autoRow,el('p','muted','同一软件只保留一个当前生效的 ZIP 发布版本；历史版本仅供审计。'));
      const github=el('div','software-github-source');
-     github.append(el('strong','','GitHub 正式 Release 更新源'));
-     const urlLabel=el('label','','仓库地址（公开 github.com/所有者/仓库）');
-     const repoInput=el('input');repoInput.type='url';repoInput.maxLength=220;
+     github.append(el('strong','','正式 Release 更新源（支持 HTTPS 镜像/代理）'));
+     const urlLabel=el('label','','仓库地址（GitHub 或公开 HTTPS 镜像/代理地址）');
+     const repoInput=el('input');repoInput.type='url';repoInput.maxLength=300;
      repoInput.value=profile.github_repo||'';
-     repoInput.placeholder='https://github.com/popowk/dsh-fish-soul-bridage';
+     repoInput.placeholder='https://git.wksite.cn/popowk/dsh-fish-soul-bridage';
      urlLabel.append(repoInput);
      const assetLabel=el('label','','ZIP 文件名（可留空自动选择唯一 ZIP）');
      const assetInput=el('input');assetInput.maxLength=180;assetInput.value=profile.github_asset||'';
@@ -580,7 +580,7 @@ function renderFleet(){
      const actions=el('div','software-release-actions');
      const save=btn('保存更新源','ghost small',async()=>{
        if(githubEnabled.checked&&!repoInput.value.trim())
-         return toast('请先输入 GitHub 公开仓库地址',true);
+         return toast('请先输入公开 HTTPS 仓库或镜像地址',true);
        if(githubEnabled.checked&&!confirm('自动检查会定期下载并验证 GitHub 正式 ZIP，然后替换服务器当前生效版本。\n若“自动推送全部客户机”也已打开，验证成功后还会给在线客户机下发新版本。确定开启？'))return;
        save.disabled=true;
        try{
@@ -605,7 +605,7 @@ function renderFleet(){
        finally{check.disabled=false;}
      });
      actions.append(save,check);
-     github.append(urlLabel,assetLabel,enabledRow,actions,status);
+     github.append(urlLabel,el('p','muted','支持 https://镜像/owner/repo 或 https://代理/https://github.com/owner/repo；代理需提供兼容的 Release API 和 ZIP 下载服务。'),assetLabel,enabledRow,actions,status);
      body.append(github);
 
      const controls=el('div','software-release-actions');
