@@ -9,7 +9,12 @@ if (-not $ConfirmBuildClone) {
 $admin=([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) { throw 'Administrator privileges required inside the BUILD VM.' }
 $bootstrap=Join-Path $PSScriptRoot 'Install-OOBE-Bootstrap.ps1'
-$agent=Join-Path (Split-Path -Parent $PSScriptRoot) 'guest_agent\Install-GuestAgentV2.ps1'
+$kitRoot=Split-Path -Parent $PSScriptRoot
+$agent=Join-Path $kitRoot 'Agent\Install-GuestAgentV2.ps1'
+if (-not (Test-Path -LiteralPath $agent -PathType Leaf)) {
+    # Compatibility with already exported v1.4.63 guest/guest_agent kits.
+    $agent=Join-Path $kitRoot 'guest_agent\Install-GuestAgentV2.ps1'
+}
 if (-not (Test-Path -LiteralPath $bootstrap -PathType Leaf) -or
     -not (Test-Path -LiteralPath $agent -PathType Leaf)) {
     throw 'The complete exported Guest toolkit (guest and guest_agent folders) is required.'
