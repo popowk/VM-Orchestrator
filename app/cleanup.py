@@ -445,7 +445,7 @@ class CleanupManager:
                     raise CleanupError('软件 ZIP SHA-256 不匹配，拒绝删除')
                 from .fleet import FleetError
                 try:
-                    self.fleet.delete_package(identifier)
+                    self.fleet.delete_package(identifier,require_inactive=True)
                 except FleetError as exc:
                     raise CleanupError(str(exc)) from exc
             elif item['kind'] in ('old_log', 'update_artifact', 'program_extra', 'data_cache'):
