@@ -181,6 +181,18 @@ class PortableCatalog:
                             ORDER BY uploaded_at DESC, rowid DESC LIMIT 1), '')
                     """)
             d.execute('CREATE INDEX IF NOT EXISTS portable_package_meta_profile ON portable_package_meta(profile_id,uploaded_at)')
+            source_columns={
+                'github_repo': "TEXT NOT NULL DEFAULT ''",
+                'github_enabled': "INTEGER NOT NULL DEFAULT 0",
+                'github_asset': "TEXT NOT NULL DEFAULT ''",
+                'github_last_checked': 'TEXT',
+                'github_last_result': "TEXT NOT NULL DEFAULT ''",
+                'github_last_error': "TEXT NOT NULL DEFAULT ''",
+                'github_last_tag': "TEXT NOT NULL DEFAULT ''",
+            }
+            for name,ddl in source_columns.items():
+                if name not in columns:
+                    d.execute(f'ALTER TABLE portable_profiles ADD COLUMN {name} {ddl}')
 
 
     @contextmanager
@@ -237,6 +249,41 @@ class PortableCatalog:
                     WHERE status='QUEUED' AND package_id!=? AND package_id IN (
                         SELECT id FROM update_packages WHERE product=?)''',
                     (package_id,'portable-'+profile['id']))
+
+    def configure_github(self, profile_id: str, repo_url: str,
+                         enabled: bool, asset_name: str) -> dict:
+        """GitHub source is separate from the customer auto-push policy."""
+        from .github_releases import canonical_repo, safe_asset_name
+        url=canonical_repo(repo_url) if repo_url.strip() else ''
+        asset=safe_asset_name(asset_name)
+        if enabled and not url:
+            raise PortableCatalogError('先填写 GitHub 公开仓库网址才能启用自动检查')
+        with self._db() as d:
+            d.execute('BEGIN IMMEDIATE')
+            row=d.execute('SELECT id,github_repo FROM portable_profiles WHERE id=?',
+                          (profile_id,)).fetchone()
+            if not row:
+                raise PortableCatalogError('软件档案不存在，请先上传首次软件 ZIP')
+            other=d.execute('SELECT id FROM portable_profiles WHERE github_repo=? AND id<>? LIMIT 1',
+                            (url,profile_id)).fetchone() if url else None
+            if other:
+                raise PortableCatalogError('这个 GitHub 仓库已绑定另一个软件目录')
+            changed=url!=row['github_repo']
+            d.execute('''UPDATE portable_profiles SET github_repo=?,github_enabled=?,
+                         github_asset=?,updated_at=CURRENT_TIMESTAMP,
+                         github_last_error='', github_last_result=CASE WHEN ? THEN '' ELSE github_last_result END,
+                         github_last_tag=CASE WHEN ? THEN '' ELSE github_last_tag END
+                         WHERE id=?''',
+                      (url,int(enabled),asset,int(changed),int(changed),profile_id))
+        return self.get(profile_id)
+
+    def github_result(self, profile_id: str, *,
+                      result: str='', error: str='', tag: str='') -> None:
+        # Never store URLs with GitHub signed redirect tokens.
+        with self._db() as d:
+            d.execute('''UPDATE portable_profiles SET github_last_checked=CURRENT_TIMESTAMP,
+                  github_last_result=?,github_last_error=?,github_last_tag=?
+                  WHERE id=?''',(result[:200],error[:240],tag[:60],profile_id))
 
     def set_auto_deploy(self, profile_id: str, enabled: bool) -> dict:
         """Persist the operator's explicit fleet-wide deployment policy."""
