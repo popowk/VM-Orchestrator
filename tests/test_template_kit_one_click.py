@@ -21,7 +21,7 @@ class OneClickGoldenTemplateTests(unittest.TestCase):
             ps1 = build / "Export-GuestToolkit.ps1"
             self.assertTrue(cmd.is_file())
             self.assertTrue(ps1.is_file())
-            self.assertIn("scripts\\\\host\\\\Export-GuestToolkit.ps1", ps1.read_text())
+            self.assertIn(r"scripts\host\Export-GuestToolkit.ps1", ps1.read_text())
             ps1.write_text("manual custom launcher", encoding="utf-8")
             restore_missing_template_entrypoints(build)
             self.assertEqual(ps1.read_text(encoding="utf-8"), "manual custom launcher")
