@@ -95,7 +95,7 @@ class MissingBackupTests(unittest.TestCase):
         self.assertTrue(self.missing.is_dir())
 
     def test_untracked_backup_folder_is_protected_not_deleted(self):
-        orphan=self.backups/'001-'+str(uuid.uuid4())
+        orphan=self.backups/('001-'+str(uuid.uuid4()))
         orphan.mkdir()
         (orphan/'data.vmdk').write_bytes(b'secret')
         scan=self.manager.scan()
