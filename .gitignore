@@ -8,3 +8,10 @@ reports/
 *.log
 *.key
 *.pem
+# Runtime BUILD disks and exported kits are never source code.
+/template_build/*/
+/template_build/*.vmx
+/template_build/*.vmdk
+/template_build/*.iso
+/template_build/*.nvram
+
