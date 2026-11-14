@@ -26,6 +26,7 @@ from .vnc_screen import enable_vnc, capture_loopback_vnc, vnc_config
 
 from .config import Settings
 from .jobs import JobRunner
+from .template_build import TemplateBuildManager, TemplateBuildError
 from .storage import StoreConflict, TemplateStore
 from .fleet import FleetStore, FleetError
 from .remote_ops import RemoteStore, RemoteError, UPLOAD_CHUNK, DEFAULT_UPLOAD_DIR
@@ -157,6 +158,9 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     vmrun = vmrun or Vmrun(settings.vmrun_path)
     secret_root = settings.db_path.parent / 'provision-secrets'
     runner = JobRunner(store, vmrun, secret_root, settings.admin_key)
+    build_root=settings.template_build_root or templates_root.parent / 'Template-Build'
+    template_builder=TemplateBuildManager(build_root,templates_root,vms_root,
+                                          settings.db_path,store,vmrun,runner.pool)
     app = FastAPI(title='VMware Workstation Host Agent', version='1.4.60',
                   description='Local management of sealed templates and VMware Workstation VMs.')
 
@@ -572,6 +576,44 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         result['vmrun_responding'] = running_set() is not None if result['vmrun_present'] else False
         result['clone_verified_on_host'] = False  # only actual clone job can verify support
         return result
+
+    class CreateTemplateBuildRequest(BaseModel):
+        name: str = Field(min_length=1,max_length=48)
+        mode: Literal['iso','clone']
+        iso_path: str = Field(default='',max_length=600)
+        source_template_id: str = Field(default='',max_length=80)
+        memory_mb: int = Field(default=8192,ge=2048,le=32768)
+        cpus: int = Field(default=4,ge=1,le=16)
+        disk_gb: int = Field(default=80,ge=40,le=1024)
+
+    @app.get('/api/template-builds', dependencies=[Depends(authorized)])
+    def list_template_builds():
+        return {'root':str(build_root),'builds':template_builder.list(),
+                'note':'制作目录独立，不会迁移现有黄金模板或客户机。发布只建立正式模板候选，需人工 Sysprep 验收与封存。'}
+
+    @app.post('/api/template-builds', dependencies=[Depends(authorized)], status_code=202)
+    def create_template_build(payload: CreateTemplateBuildRequest):
+        try:
+            source=None
+            if payload.mode=='clone':
+                template=store.get(payload.source_template_id)
+                if not template or template['status']!='SEALED_ATTESTED':
+                    raise HTTPException(409,'请选择已经封存的黄金模板作为克隆来源')
+                source=vmx_under_root(template['vmx_path'])
+            return template_builder.create(
+                name=payload.name,mode=payload.mode,
+                iso_path=Path(payload.iso_path) if payload.mode=='iso' else None,
+                source_vmx=source,memory_mb=payload.memory_mb,
+                cpus=payload.cpus,disk_gb=payload.disk_gb)
+        except TemplateBuildError as exc:
+            raise HTTPException(409,str(exc)) from exc
+
+    @app.post('/api/template-builds/{build_id}/publish', dependencies=[Depends(authorized)], status_code=202)
+    def publish_template_build(build_id: str):
+        try:
+            return template_builder.publish(build_id)
+        except TemplateBuildError as exc:
+            raise HTTPException(409,str(exc)) from exc
 
     @app.get('/api/templates', dependencies=[Depends(authorized)])
     def list_templates():
