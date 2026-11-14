@@ -175,3 +175,9 @@ prevent a clean build with an unwired feature.
 如果重装数据库记录真实存在、路径符合规范，但备份目录已经不存在，空间清理另列为“已缺失的历史重装备份记录”，按0字节显示。
 管理员勾选并输入“确认备份缺失”，仅给历史行写入 backup_missing_at 时间，保留 SUCCEEDED、原路径、全部重装审计，不写 backup_deleted_at，也不删除任何文件。
 目录重新出现时不能确认缺失；路径不匹配和数据库无关联的孤立备份一律只标记为受保护，不能自动删除。
+
+
+## v1.4.61 — 公开 HTTPS Release 镜像和诊断
+软件更新正式 Release 源支持 GitHub 直连、公开 HTTPS 仓库镜像（如 https://git.wksite.cn/owner/repo）以及完整 URL 转发代理（如 https://gh-proxy.com/https://github.com/owner/repo）。直连使用 api.github.com，普通镜像依次尝试同站 /api/repos/... 和 /api/v1/repos/.../releases/latest，完整 URL 代理从代理域名访问 /https://api.github.com/repos/.../releases/latest；ZIP 下载同样走对应镜像/代理。不同代理支持能力不同；只有 Release API 返回兼容 JSON 且支持同仓库正式 ZIP 下载时，才能自动更新。
+后台会细分 DNS 解析失败、HTTPS 连接超时、TLS 证书错误、HTTP 403/404/429/502 和非 JSON API 响应，不再将所有错误显示成同一条。禁止 http、直接 IP、localhost、内网域名和解析到非公网 IP 的域名；每次 HTTPS 连接采用 DNS 验证并绑定公开 IP，TLS 校验原域名，重定向只能去已配置镜像域名或可信 GitHub CDN。为避免系统隐式代理绕过 IP 保护，Release 下载不读取操作系统 HTTP_PROXY 环境变量；需要走代理时请填写公开 HTTPS 代理网址。
+原有 ZIP 单顶层目录、启动文件、SHA-256、GitHub digest（如果有）、版本非降级、同版本不同 ZIP 阻止发布等校验保留。服务器激活后只有该软件原本已启用“自动推送全部客户机”才下发。自动检查默认关闭。
