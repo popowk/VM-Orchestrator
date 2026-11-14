@@ -109,7 +109,7 @@ class ApprovedPackageCleanupTests(unittest.TestCase):
         path=self.packages/(self.old+'.zip')
         payload=path.read_bytes()
         path.write_bytes(payload[::-1])
-        item=next(x for x in self.items() if x['id']=='package:'+self.old')
+        item=next(x for x in self.items() if x['id']=='package:'+self.old)
         with self.assertRaisesRegex(CleanupError,'SHA-256'):
             self.cleanup.delete([{'id':item['id'],
                 'fingerprint':item['fingerprint'],'confirm_software':True}])
