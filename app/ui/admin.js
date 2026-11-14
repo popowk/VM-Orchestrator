@@ -558,6 +558,56 @@ function renderFleet(){
      };
      autoRow.append(auto,autoText);
      body.append(autoRow,el('p','muted','同一软件只保留一个当前生效的 ZIP 发布版本；历史版本仅供审计。'));
+     const github=el('div','software-github-source');
+     github.append(el('strong','','GitHub 正式 Release 更新源'));
+     const urlLabel=el('label','','仓库地址（公开 github.com/所有者/仓库）');
+     const repoInput=el('input');repoInput.type='url';repoInput.maxLength=220;
+     repoInput.value=profile.github_repo||'';
+     repoInput.placeholder='https://github.com/popowk/dsh-fish-soul-bridage';
+     urlLabel.append(repoInput);
+     const assetLabel=el('label','','ZIP 文件名（可留空自动选择唯一 ZIP）');
+     const assetInput=el('input');assetInput.maxLength=180;assetInput.value=profile.github_asset||'';
+     assetInput.placeholder='留空选唯一 ZIP；或填写 MyApp-v{version}-Windows-Full.zip';
+     assetLabel.append(assetInput);
+     const enabledRow=el('label','software-auto-control');
+     const githubEnabled=document.createElement('input');githubEnabled.type='checkbox';
+     githubEnabled.checked=Boolean(profile.github_enabled);
+     enabledRow.append(githubEnabled,el('span','','开启自动检查最新正式 Release（每6小时）'));
+     const status=el('p','muted','最近检查：'+(profile.github_last_checked||'未检查')+
+       (profile.github_last_tag?' · '+profile.github_last_tag:'')+
+       (profile.github_last_error?' · 失败：'+profile.github_last_error:
+         profile.github_last_result?' · '+profile.github_last_result:''));
+     const actions=el('div','software-release-actions');
+     const save=btn('保存更新源','ghost small',async()=>{
+       if(githubEnabled.checked&&!repoInput.value.trim())
+         return toast('请先输入 GitHub 公开仓库地址',true);
+       if(githubEnabled.checked&&!confirm('自动检查会定期下载并验证 GitHub 正式 ZIP，然后替换服务器当前生效版本。\n若“自动推送全部客户机”也已打开，验证成功后还会给在线客户机下发新版本。确定开启？'))return;
+       save.disabled=true;
+       try{
+         const result=await request('/api/fleet/portable/profiles/'+encodeURIComponent(profile.id)+
+           '/github-source','POST',{url:repoInput.value.trim(),
+             asset_name:assetInput.value.trim(),enabled:githubEnabled.checked});
+         toast(result.note);save.blur();await refresh();
+       }catch(error){toast('更新源保存失败：'+error.message,true)}
+       finally{save.disabled=false;}
+     });
+     const check=btn('立即检查并验证','primary small',async()=>{
+       if(!confirm('立即检查新正式 Release？校验成功后会更新服务器生效包，并按已开启的自动推送策略下发。'))return;
+       check.disabled=true;status.textContent='正在下载和校验 GitHub Release…';
+       try{
+         const result=await request('/api/fleet/portable/profiles/'+encodeURIComponent(profile.id)+
+           '/github-check','POST',{});
+         status.textContent=(result.state==='published'?'发布成功':'当前无新版本')+
+           ' · '+(result.tag||'')+
+           (result.state==='published'?' · 已排队 '+(result.auto_queued||0)+' 台':'');
+         toast(status.textContent);check.blur();await refresh();
+       }catch(error){status.textContent='检查失败：'+error.message;toast(status.textContent,true)}
+       finally{check.disabled=false;}
+     });
+     actions.append(save,check);
+     github.append(urlLabel,assetLabel,enabledRow,actions,status);
+     body.append(github);
+
      const controls=el('div','software-release-actions');
      const select=el('select');select.setAttribute('aria-label','选择单台或全部客户机');
      select.append(new Option('请选择单台或全部',''));
@@ -1627,12 +1677,27 @@ window.VMOSelfService=(()=>{
 /* ===== cleanup center; never infer deletability from a directory name ===== */
 (function(){
  'use strict';
- let candidates=[],scanning=false,deleting=false;
+ let candidates=[],missingRecords=[],scanning=false,deleting=false;
  const fmt=n=>{const x=Number(n)||0;return x>=1073741824?(x/1073741824).toFixed(2)+' GB':
           x>=1048576?(x/1048576).toFixed(1)+' MB':x>=1024?(x/1024).toFixed(1)+' KB':x+' B';};
  const selected=()=>Array.from(document.querySelectorAll('.vmo-clean-select:checked')).map(c=>c.dataset.id);
  function render(data){
    candidates=data.items||[];
+   missingRecords=data.missing_records||[];
+   const missing=$('cleanupMissingRecords');
+   if(missing){
+     missing.replaceChildren();
+     for(const item of missingRecords){
+       const row=el('div','template-card'),label=el('label','check-row');
+       const input=document.createElement('input');input.type='checkbox';
+       input.className='vmo-missing-select';input.dataset.job=item.job_id;
+       label.append(input,el('strong','','历史备份缺失 · '+item.job_id));
+       row.append(label,el('small','',item.path),el('small','',item.reason));
+       missing.append(row);
+     }
+     if(!missing.childElementCount)
+       missing.append(el('p','muted','没有待核实的缺失备份记录。'));
+   }
    const out=$('cleanupProgramItems'),vms=$('cleanupVMBackups'),blocked=$('cleanupProtected');
    if(!out||!vms||!blocked)return;
    out.replaceChildren();vms.replaceChildren();blocked.replaceChildren();
@@ -1658,7 +1723,8 @@ window.VMOSelfService=(()=>{
    }
    if(!blocked.childElementCount)blocked.append(el('p','muted','没有需要人工处理的候选项目。'));
    $('cleanupSummary').textContent='可检查 '+candidates.length+' 项，合计 '+fmt(data.total_bytes)+
-       '；其中旧虚拟机备份 '+(data.reinstall_backups||0)+' 项，受保护 '+(data.protected_count||0)+' 项。勾选后才会删除。';
+       '；其中旧虚拟机备份 '+(data.reinstall_backups||0)+' 项，缺失记录 '+missingRecords.length+
+       ' 条，受保护 '+(data.protected_count||0)+' 项。缺失记录不占空间，确认后仅同步数据库状态。';
  }
  async function scan(){
    if(scanning||deleting)return;
@@ -1705,5 +1771,21 @@ window.VMOSelfService=(()=>{
      });
    });
    $('cleanupDeleteBtn')?.addEventListener('click',clean);
+   $('cleanupAcknowledgeMissing')?.addEventListener('click',async()=>{
+     if(scanning||deleting)return;
+     const ids=[...document.querySelectorAll('.vmo-missing-select:checked')]
+       .map(x=>x.dataset.job).filter(Boolean);
+     if(!ids.length)return toast('请勾选需要确认的缺失备份记录',true);
+     if(!confirm('将 '+ids.length+' 条已经不存在的历史备份标记为“已核实缺失”。\n不会删除任何虚拟机文件，不会清除重装历史，也不会释放磁盘空间。是否继续？'))return;
+     if(prompt('输入“确认备份缺失”以提交数据库状态：','')!=='确认备份缺失')return;
+     deleting=true;
+     try{
+       const result=await request('/api/system/cleanup/acknowledge-missing','POST',{
+         job_ids:ids,confirm_phrase:'确认备份缺失'});
+       toast('已核实 '+result.acknowledged.length+' 条失效备份记录，未删除任何文件');
+       await scanAfterDelete();
+     }catch(e){toast('失效记录同步失败：'+e.message,true);await scanAfterDelete();}
+     finally{deleting=false;}
+   });
  });
 })();

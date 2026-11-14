@@ -69,6 +69,8 @@ class FleetStore:
             reinstall_columns={r[1] for r in d.execute('PRAGMA table_info(vm_reinstalls)')}
             if 'backup_deleted_at' not in reinstall_columns:
                 d.execute('ALTER TABLE vm_reinstalls ADD COLUMN backup_deleted_at TEXT')
+            if 'backup_missing_at' not in reinstall_columns:
+                d.execute('ALTER TABLE vm_reinstalls ADD COLUMN backup_missing_at TEXT')
             package_columns={r[1] for r in d.execute('PRAGMA table_info(update_packages)')}
             if 'deleted_at' not in package_columns:
                 d.execute('ALTER TABLE update_packages ADD COLUMN deleted_at TEXT')
@@ -438,6 +440,20 @@ class FleetStore:
                           "AND backup_deleted_at IS NULL", (now(),job_id,backup_path))
             if cur.rowcount != 1:
                 raise FleetError('Reinstall backup changed during cleanup; inspect history')
+
+    def mark_reinstall_backup_missing(self, job_id: str, backup_path: str) -> None:
+        """Retain complete reinstall audit; acknowledge only a verified missing backup.
+
+        Does not imply a backup was deleted by VMO and never touches the disk.
+        """
+        with self.db() as d:
+            d.execute('BEGIN IMMEDIATE')
+            cur=d.execute("""UPDATE vm_reinstalls SET backup_missing_at=?
+                WHERE job_id=? AND backup_path=? AND status='SUCCEEDED'
+                  AND backup_deleted_at IS NULL AND backup_missing_at IS NULL""",
+                (now(),job_id,backup_path))
+            if cur.rowcount != 1:
+                raise FleetError('Reinstall backup record changed; rescan before acknowledging')
 
     def reinstalls(self, vm_id: str | None = None):
         with self.db() as d:
