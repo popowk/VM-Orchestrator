@@ -608,8 +608,16 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         except TemplateBuildError as exc:
             raise HTTPException(409,str(exc)) from exc
 
+    class PublishTemplateBuildConfirmation(BaseModel):
+        confirm_sysprep_shutdown: bool = False
+        confirm_iso_removed: bool = False
+        confirm_preserve_originals: bool = False
+
     @app.post('/api/template-builds/{build_id}/publish', dependencies=[Depends(authorized)], status_code=202)
-    def publish_template_build(build_id: str):
+    def publish_template_build(build_id: str, payload: PublishTemplateBuildConfirmation):
+        if not all((payload.confirm_sysprep_shutdown,payload.confirm_iso_removed,
+                    payload.confirm_preserve_originals)):
+            raise HTTPException(422,'发布需要确认 Sysprep 关机、移除安装 ISO、保留原模板和客户数据')
         try:
             return template_builder.publish(build_id)
         except TemplateBuildError as exc:
