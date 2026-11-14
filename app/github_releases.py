@@ -1,136 +1,35 @@
-"""Server-side, opt-in GitHub Release updater for reviewed portable C:\dsh apps.
+"""Opt-in verified Release update for portable Windows applications.
 
-The only external origin is a public github.com/owner/repo RELEASE, never a
-GitHub source-code archive or a user-supplied binary URL. Release ZIPs go
-through the same strict inspect_zip, CRC, SHA256, launcher, program folder
-and active-version checks as admin uploaded software. The auto-push policy
-remains separate and disabled unless already enabled for this application.
+Repository origins may be public GitHub, a public HTTPS repository mirror, or
+a full-URL GitHub proxy. Network transport and redirect controls are isolated
+in release_source_network. Release ZIPs still pass all strict archive,
+version, signature/evidence, launcher and single-active-package checks.
 """
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import tempfile
 import threading
-import urllib.parse
-import urllib.request
 import uuid
 import zipfile
 from pathlib import Path
 
 from .portable_catalog import VERSION, inspect_zip, PortableCatalogError
-
-_OWNER = re.compile(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\Z')
-_REPO = re.compile(r'[A-Za-z0-9_.-]{1,100}\Z')
-_ALLOWED_HOSTS = frozenset({
-    'api.github.com', 'github.com',
-    'release-assets.githubusercontent.com',
-    'objects.githubusercontent.com',
-})
-_MAX_ZIP = 512 * 1024 * 1024
-_MAX_JSON = 2 * 1024 * 1024
-
-
-class GitHubSourceError(ValueError):
-    pass
-
-
-def canonical_repo(url: str) -> str:
-    if not isinstance(url, str) or len(url)>220:
-        raise GitHubSourceError('GitHub 仓库地址无效')
-    u=urllib.parse.urlsplit(url.strip())
-    if (u.scheme!='https' or u.netloc.lower()!='github.com' or
-            u.username is not None or u.password is not None or
-            u.port is not None or u.query or u.fragment):
-        raise GitHubSourceError('只允许 https://github.com/所有者/仓库 的公开仓库地址')
-    parts=u.path.strip('/').split('/')
-    if len(parts)!=2 or not _OWNER.fullmatch(parts[0]) or not _REPO.fullmatch(parts[1]):
-        raise GitHubSourceError('GitHub 地址仅填写仓库根地址，不要填 Release 或 ZIP 的下载链接')
-    if parts[1].lower().endswith('.git'):
-        raise GitHubSourceError('请填写 GitHub 网页仓库地址，不要填写 .git 克隆地址')
-    return f'https://github.com/{parts[0]}/{parts[1]}'
-
+from .release_source_network import (
+    ReleaseNetworkError as GitHubSourceError,
+    canonical_repo,parse_source,_https_url,fetch_release,download_asset,
+)
 
 def safe_asset_name(value: str) -> str:
     value=value.strip()
-    # Optional placeholders allow filename templates to survive new tags,
-    # e.g. dsh-fish-soul-bridage-v{version}-Windows-Full.zip.
     example=value.replace('{version}','1.2.3').replace('{tag}','v1.2.3')
     if value and (len(value)>180 or
                   not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]*\.zip',example,re.I)
                   or '..' in example):
-        raise GitHubSourceError('ZIP 文件名只支持安全文件名及 {version}/{tag} 变量，不允许目录、通配符或参数')
+        raise GitHubSourceError('ZIP 文件名只支持安全文件名和 {version}/{tag} 模板变量，不允许目录或通配符')
     return value
-
-
-def _https_url(url: str, *, api: bool=False) -> str:
-    u=urllib.parse.urlsplit(url)
-    host=(u.hostname or '').lower()
-    if (u.scheme!='https' or host not in _ALLOWED_HOSTS or
-            u.username is not None or u.password is not None or
-            u.port not in (None,443)):
-        raise GitHubSourceError('GitHub Release 出现了不安全的下载重定向，已停止')
-    if api and host!='api.github.com':
-        raise GitHubSourceError('只可通过 GitHub 官方 API 检查 Release')
-    return url
-
-
-class _SafeRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        _https_url(newurl)
-        return super().redirect_request(req,fp,code,msg,headers,newurl)
-
-
-_OPENER=urllib.request.build_opener(_SafeRedirect())
-
-
-def fetch_release(repo_url: str) -> dict:
-    path=urllib.parse.urlsplit(canonical_repo(repo_url)).path.strip('/')
-    url=_https_url('https://api.github.com/repos/'+path+'/releases/latest',api=True)
-    req=urllib.request.Request(url,headers={
-        'Accept':'application/vnd.github+json',
-        'User-Agent':'VM-Orchestrator-Portable-Release-Updater',
-        'X-GitHub-Api-Version':'2022-11-28'})
-    try:
-        with _OPENER.open(req,timeout=18) as response:
-            if int(response.headers.get('Content-Length') or 0)>_MAX_JSON:
-                raise GitHubSourceError('Release 元数据过大')
-            blob=response.read(_MAX_JSON+1)
-            if len(blob)>_MAX_JSON:
-                raise GitHubSourceError('Release 元数据超过限制')
-            return json.loads(blob.decode('utf-8'))
-    except (OSError,ValueError) as exc:
-        raise GitHubSourceError('无法读取公开 GitHub 最新正式 Release（网络/限流/仓库权限）') from exc
-
-
-def download_asset(url: str, destination: Path) -> tuple[str,int]:
-    """Stream a trusted GitHub release asset; cap bytes on every transfer."""
-    _https_url(url)
-    request=urllib.request.Request(url,headers={
-        'User-Agent':'VM-Orchestrator-Portable-Release-Updater',
-        'Accept':'application/octet-stream'})
-    hasher=hashlib.sha256()
-    size=0
-    try:
-        with _OPENER.open(request,timeout=65) as response:
-            if int(response.headers.get('Content-Length') or 0)>_MAX_ZIP:
-                raise GitHubSourceError('Release ZIP 超过 512 MB')
-            with destination.open('xb') as out:
-                while True:
-                    chunk=response.read(1024*1024)
-                    if not chunk:break
-                    size+=len(chunk)
-                    if size>_MAX_ZIP:
-                        raise GitHubSourceError('Release ZIP 超过 512 MB')
-                    out.write(chunk)
-                    hasher.update(chunk)
-    except OSError as exc:
-        raise GitHubSourceError('GitHub Release ZIP 下载失败') from exc
-    if size<50:
-        raise GitHubSourceError('GitHub Release ZIP 文件太小，可能是错误页面')
-    return hasher.hexdigest(),size
 
 
 def _version_tuple(version: str):
@@ -159,7 +58,7 @@ class GitHubReleaseUpdater:
         if not p:
             raise GitHubSourceError('软件档案不存在')
         if not p.get('github_repo'):
-            raise GitHubSourceError('请先保存 GitHub 公开仓库地址')
+            raise GitHubSourceError('请先保存公开 HTTPS 仓库或镜像地址')
         if not force and not p.get('github_enabled'):
             return {'state':'disabled','profile_id':profile_id}
         tag=''
@@ -189,11 +88,9 @@ class GitHubReleaseUpdater:
                 raise GitHubSourceError('GitHub Release ZIP 大小无效或超过 512 MB')
             # Never download an arbitrary URL returned by a compromised API;
             # only a release asset under the configured public repository.
-            url=str(asset.get('browser_download_url') or '')
-            prefix=source+'/releases/download/'
-            if not url.startswith(prefix):
-                raise GitHubSourceError('Release 下载地址不属于已绑定仓库')
-            _https_url(url)
+            url=parse_source(source).asset_url(
+                tag,name,str(asset.get('browser_download_url') or ''))
+            _https_url(url,allowed_hosts={parse_source(source).host})
             active=self.fleet.package(p['active_package_id']) if p.get('active_package_id') else None
             if active:
                 previous=_version_tuple(active['version'])
