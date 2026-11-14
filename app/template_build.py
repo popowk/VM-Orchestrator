@@ -248,7 +248,8 @@ class TemplateBuildManager:
             # ISO inherited from a cloned existing template. Merely toggling
             # startConnected off is not sufficient: detach it completely.
             vmx_text=src.read_text(encoding='utf-8-sig',errors='replace')
-            if re.search(r'(?im)^\s*(?:ide|sata|scsi)\d+:\d+\.fileName\s*=\s*"[^"]+\.iso"\s*
+            if re.search(r'(?im)^\s*(?:ide|sata|scsi)\d+:\d+\.fileName\s*=\s*"[^"]+\.iso"\s*$',vmx_text):
+                raise TemplateBuildError('模板 VMX 仍引用 ISO 镜像；请在 VMware 中移除/清空 ISO 路径后再发布')
             destination=self.templates_root/row['name']/(row['name']+'.vmx')
             if destination.parent.exists() or destination.parent.is_symlink():
                 raise TemplateBuildError('正式模板目录同名项目已存在，不能覆盖')
