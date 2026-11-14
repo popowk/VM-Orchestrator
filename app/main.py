@@ -158,10 +158,10 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     vmrun = vmrun or Vmrun(settings.vmrun_path)
     secret_root = settings.db_path.parent / 'provision-secrets'
     runner = JobRunner(store, vmrun, secret_root, settings.admin_key)
-    build_root=settings.template_build_root or templates_root.parent / 'Template-Build'
+    build_root=settings.template_build_root or (Path(__file__).resolve().parent.parent / 'template_build')
     template_builder=TemplateBuildManager(build_root,templates_root,vms_root,
                                           settings.db_path,store,vmrun,runner.pool)
-    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.62',
+    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.63',
                   description='Local management of sealed templates and VMware Workstation VMs.')
 
     # One checked, opt-in source poll per process. The Host already forbids

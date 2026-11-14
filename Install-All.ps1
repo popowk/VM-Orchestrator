@@ -60,6 +60,16 @@ if (Test-Path -LiteralPath (Join-Path $Target 'app\main.py') -PathType Leaf) {
             Copy-Item -LiteralPath $original -Destination $backup -Recurse -Force
         }
     }
+    # template_build is a LIVE workspace. Back up script files, never VM disks.
+    $templateTools=@('README.md','Export-GuestToolkit.ps1')
+    foreach ($tool in $templateTools) {
+        $srcTool=Join-Path (Join-Path $Target 'template_build') $tool
+        if (Test-Path -LiteralPath $srcTool -PathType Leaf) {
+            $toolBackup=Join-Path $backup 'template_build'
+            New-Item -ItemType Directory -Path $toolBackup -Force | Out-Null
+            Copy-Item -LiteralPath $srcTool -Destination (Join-Path $toolBackup $tool) -Force
+        }
+    }
     Write-Host "Backup created: $backup" -ForegroundColor Cyan
 }
 
@@ -74,6 +84,11 @@ Get-ChildItem -LiteralPath $source -Recurse -File -Force | ForEach-Object {
     $relative = $_.FullName.Substring($source.Length).TrimStart('\')
     if ($relative -match '^(data|dist|\.venv|\.git|backup-before-)[\\/]') { return }
     if ($relative -eq '.env') { return }
+    # Whitelist ONLY source tools inside template_build; it contains live BUILD
+    # VMDKs, exported Guest toolkits and possibly customer setup material.
+    if ($relative -match '^(?i:template_build)[\\/]') {
+        if ($relative -notin @('template_build\README.md','template_build\Export-GuestToolkit.ps1')) { return }
+    }
     if ($relative -match '(?i)(^|[\\/])(__pycache__|tests|Guest-Agent-QuickFix)([\\/]|$)' -or
         $relative -match '(?i)\.(pyc|sqlite3|db|pem|pfx|key)$' -or
         $relative.Contains(':')) { return }

@@ -1,4 +1,4 @@
-# VM Orchestrator — 功能总览（v1.4.50）
+# VM Orchestrator — 功能总览（v1.4.63）
 
 VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机运营管理系统。正式发布包仅包含运行程序与必要安装/运维脚本；此文件为唯一的产品说明。
 
@@ -185,8 +185,13 @@ prevent a clean build with an unwired feature.
 
 ## v1.4.62 — 独立黄金模板制作与新系统软件自动推送
 
-正式新增 template_build/ 工具目录和宿主机 D:\VMware\Template-Build 制作区：可在管理后台通过 ISO 新建 Windows 10 EFI 虚拟机/稀疏系统盘，或使用 VMware vmrun full-clone 复制现有已封存模板。制作区不与原正式模板 D:\VMware\Template、客户机 D:\VMware\Customers 重叠。制作工具 Export-GuestToolkit.ps1 在独立制作区导出 Guest OOBE/Sysprep/Agent V2 工具，供复制到 BUILD Windows；失败时保留现场，不删除源目录。人工完成配置和 Sysprep 关机、确认移除安装 ISO 后，可通过 VMware 完整克隆发布到新的正式模板候选目录；仅登记为 CANDIDATE，仍需后续人工封存与 OOBE 验证，旧模板和客户机不迁移、不覆盖。
+正式新增 template_build/ 工具目录和宿主机 D:\VMware\VM-Orchestrator\template_build 制作区：可在管理后台通过 ISO 新建 Windows 10 EFI 虚拟机/稀疏系统盘，或使用 VMware vmrun full-clone 复制现有已封存模板。制作区不与原正式模板 D:\VMware\Template、客户机 D:\VMware\Customers 重叠。制作工具 Export-GuestToolkit.ps1 在独立制作区导出 Guest OOBE/Sysprep/Agent V2 工具，供复制到 BUILD Windows；失败时保留现场，不删除源目录。人工完成配置和 Sysprep 关机、确认移除安装 ISO 后，可通过 VMware 完整克隆发布到新的正式模板候选目录；仅登记为 CANDIDATE，仍需后续人工封存与 OOBE 验证，旧模板和客户机不迁移、不覆盖。
 
 Guest Agent 软件自动推送按 vm_id + enrollment_agent_id + 当前软件包 ID 去重。新建和重装客户机的 Windows 独立注册后，即使原虚拟机 ID 曾成功更新同一软件，也会给新的 Agent 注册身份重新下发所有启用了自动推送的现行便携软件 ZIP。旧任务审计保留，新系统首次安装默认保持关闭；同一新系统不会因重复心跳反复安装。
 
 空间清理新增历史软件 ZIP 分类，扫描 D:\VMware\VM-Orchestrator\data\approved_packages 的非生效旧版本；包必须有数据库记录、没有活动或结果待确认的更新任务、没有客户自助操作引用，才作为人工勾选项显示。当前生效 ZIP、未知文件和被引用文件仍受保护。清理先预览并人工双确认；执行时重检 ZIP SHA-256 与数据库，调用原 FleetStore 删除流程，保留历史审计，不直接删除未知文件。
+
+
+## v1.4.63 — 黄金模板制作目录与 OOBE/Agent/Sysprep 统一
+
+唯一制作目录为 `D:\VMware\VM-Orchestrator\template_build`（非默认安装时为当前程序根目录下 `template_build`），不再创建或依赖旧的独立宿主目录，旧目录由管理员自行删除。导出 `template_build/_GuestToolkit-v[VERSION]` 后，在 BUILD Windows 内通过 `guest/Prepare-TemplateGuest.ps1 -ConfirmBuildClone` 配置 OOBE 引导和无客户身份的 Guest Agent V2 系统服务，再人工核查并通过 `guest/Seal-Win10Template.ps1` 执行 Sysprep 关机。客户端首次 OOBE 从单台 VMO_INIT ISO 取得独立 Token 并注册，随后按原自动推送策略首次安装软件且默认不启动。Release 打包明确排除 BUILD VM 和导出工具包；原正式模板、历史任务与客户数据不受影响。详细操作见 `template_build/README.md`。

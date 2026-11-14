@@ -39,7 +39,7 @@ class TemplateBuilderTests(unittest.TestCase):
         t=tempfile.TemporaryDirectory()
         self.addCleanup(t.cleanup)
         self.root=Path(t.name)
-        self.build=self.root/'Template-Build'
+        self.build=self.root/'VM-Orchestrator'/'template_build'
         self.templates=self.root/'Template'
         self.customers=self.root/'Customers'
         self.templates.mkdir()
