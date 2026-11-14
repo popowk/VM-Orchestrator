@@ -1,6 +1,6 @@
 """Dedicated, non-destructive VMware Workstation golden-template build workflow.
 
-Every build is isolated under D:\VMware\Template-Build. Operator can start a
+Every build is isolated under <installed VMO root>\template_build. Operator can start a
 new Windows ISO VM or full-clone an existing SEALED_ATTESTED template. A source
 build is never edited or moved when publishing; publishing uses full clone
 into a NEW official template directory, registering only a CANDIDATE. The
