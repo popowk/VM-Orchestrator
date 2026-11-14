@@ -22,6 +22,8 @@ from .release_source_network import (
     canonical_repo,parse_source,_https_url,fetch_release,download_asset,
 )
 
+_MAX_ZIP = 512 * 1024 * 1024
+
 def safe_asset_name(value: str) -> str:
     value=value.strip()
     example=value.replace('{version}','1.2.3').replace('{tag}','v1.2.3')
