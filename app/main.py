@@ -496,6 +496,19 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
         except CleanupError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    class MissingBackupReconciliation(BaseModel):
+        job_ids: list[str] = Field(min_length=1, max_length=50)
+        confirm_phrase: str
+
+    @app.post('/api/system/cleanup/acknowledge-missing', dependencies=[Depends(authorized)])
+    def acknowledge_missing_backup_rows(payload: MissingBackupReconciliation):
+        if payload.confirm_phrase != '确认备份缺失':
+            raise HTTPException(422,'请输入确认备份缺失；此操作仅修改备份状态，不删除任何文件')
+        try:
+            return cleanup_manager.acknowledge_missing(payload.job_ids)
+        except (CleanupError,FleetError) as exc:
+            raise HTTPException(409,str(exc)) from exc
+
     @app.get('/api/host/metrics', dependencies=[Depends(authorized)])
     def host_metrics():
         return read_host_metrics(Path(__file__).resolve().parent.parent, vms_root)
