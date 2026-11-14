@@ -22,6 +22,8 @@ $ackFile = Join-Path $stateDir ('updater-ack-' + $Attempt + '.txt')
 [IO.File]::WriteAllText($ackFile, [string]$PID, [Text.Encoding]::ASCII)
 $logFile = Join-Path $stateDir ('updater-' + $Attempt + '.log')
 $folders = @('app','guest_agent','scripts','integrations','docs')
+# template_build also contains live BUILD VMDKs. Only these two tool files can be updated.
+$templateToolFiles = @('README.md','Export-GuestToolkit.ps1')
 $rootFiles = @('VERSION','Install-All.cmd','Install-All.ps1','Start-VM-Orchestrator.cmd',
                'Manage.cmd','Repair-Stuck-Update.cmd','Repair-Stuck-Update.ps1',
                'README.md','requirements.txt','.gitignore','.env.example','release-manifest.json')
@@ -208,6 +210,25 @@ function Replace-Code([string]$from) {
             Copy-Item -LiteralPath $new -Destination $old -Force
         }
     }
+    $toolRoot = Join-Path $Target 'template_build'
+    if ((Test-Path -LiteralPath $toolRoot) -and
+        ((Get-Item -LiteralPath $toolRoot).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Unsafe template_build reparse directory; refusing code update'
+    }
+    if (-not (Test-Path -LiteralPath $toolRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $toolRoot -Force | Out-Null
+    }
+    foreach ($tool in $templateToolFiles) {
+        $new = Join-Path (Join-Path $from 'template_build') $tool
+        $old = Join-Path $toolRoot $tool
+        if ((Test-Path -LiteralPath $old) -and
+            ((Get-Item -LiteralPath $old).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Unsafe template_build tool reparse file; refusing code update'
+        }
+        if (Test-Path -LiteralPath $new -PathType Leaf) {
+            Copy-Item -LiteralPath $new -Destination $old -Force
+        }
+    }
 }
 function Restore-OldCode {
     if (-not $backupDir) { throw 'No backup available for rollback' }
@@ -290,6 +311,15 @@ try {
         $path = Join-Path $Target $name
         if (Test-Path -LiteralPath $path -PathType Leaf) {
             Copy-Item -LiteralPath $path -Destination (Join-Path $backupCode $name) -Force
+        }
+    }
+    # Backup code only, never copy sensitive Windows BUILD virtual disks.
+    foreach ($tool in $templateToolFiles) {
+        $path = Join-Path (Join-Path $Target 'template_build') $tool
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $dest = Join-Path $backupCode 'template_build'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            Copy-Item -LiteralPath $path -Destination (Join-Path $dest $tool) -Force
         }
     }
     Write-State 'applying' 'Backup complete; replacing program files'
