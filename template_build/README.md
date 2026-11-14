@@ -1,76 +1,63 @@
-# VMO 黄金模板制作（程序内独立工作区）
+# VM Orchestrator Windows 10 黄金模板制作（v1.4.64）
 
-## 唯一宿主机制作目录
+## 宿主机制作目录
 
-D:\VMware\VM-Orchestrator\template_build
+唯一目录：D:\VMware\VM-Orchestrator\template_build（或 VMO 实际安装根目录下的 template_build）。
+旧 D:\VMware\Template-Build 不再使用，**由管理员自行删除**。
+正式黄金模板仍在 D:\VMware\Template，客户机仍在 D:\VMware\Customers。
+**不要在宿主机运行客户机内的 01/02/03 封装命令。**
 
-此目录同时保存工具文件、BUILD 制作虚拟机和导出的 Guest 工具包。
-旧的 D:\VMware\Template-Build 不再被程序创建或依赖；由管理员自行删除。
-正式模板库 D:\VMware\Template、客户机 D:\VMware\Customers、数据库和旧模板保持原样。
-安装在其他位置时，制作目录自动跟随实际 VMO 程序根目录下的 template_build。
-为避免误将 BUILD 放进旧目录，不再使用 VMO_TEMPLATE_BUILD_ROOT 环境变量更改位置。
+### 先在宿主机双击 00 导出工具包
 
-## 创建 BUILD Windows（两种方式）
+双击 template_build\00-Export-GuestToolkit.cmd。
 
-管理员后台「黄金模板 → 独立黄金模板制作区」：
-- 使用 Windows ISO 创建 EFI 虚拟机和新的独立稀疏 VMDK，默认无网络；
-- 从现有 SEALED_ATTESTED 正式黄金模板执行 VMware full clone，源模板不修改。
+如旧版本在线升级后该文件缺失，可先重启 VMO Host 程序，新版会只恢复缺失入口；
+也可以直接双击 scripts\host\00-Export-GuestToolkit.cmd（后者不依赖
+template_build 旧版本是否存在）。已有同名版本导出目录绝不覆盖。
 
-每个 BUILD 使用 template_build\<BUILD名称>\<BUILD名称>.vmx，
-不得覆盖已经存在的目录。通过 VMware Workstation 安装 Windows、VMware Tools、
-系统级 Python 3.11+ 和必要的通用软件，按网络隔离策略配置网络。
-已执行过 Sysprep 的旧模板再次启动后可能不能安全重复 generalize，
-因此优先从 Windows ISO 创建新的 BUILD。
+导出结果如下：
 
-## 在 BUILD Windows 内：安装 OOBE 引导与 Guest Agent V2
+    template_build\
+      00-Export-GuestToolkit.cmd
+      Export-GuestToolkit.ps1
+      _GuestToolkit-v1.4.64\
+        Agent\
+        Core\
+        01-Prepare-And-Verify.cmd
+        02-Verify-And-Seal.cmd
+        03-Check-Status.cmd
+        README-FIRST.txt
 
-先在宿主机运行：
+Agent 是通用 Guest Agent V2 代码，Core 是 OOBE、状态检查和 Sysprep 工具。
+**整包复制** _GuestToolkit-v1.4.64 到尚未封装的 Windows 10 BUILD 虚拟机，
+可以将文件夹改名为 C:\dsh\VMO-Win10-Template-Kit。
+不要将之前已经有客户身份的 C:\dsh 目录或用户会话误复制到黄金模板。
 
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "D:\VMware\VM-Orchestrator\template_build\Export-GuestToolkit.ps1"
+### 然后在 Windows BUILD 虚拟机内直接双击
 
-它生成 template_build\_GuestToolkit-v[VERSION]。同版本已存在即拒绝覆盖。
-工具包仅包含当前 OOBE、Guest Agent V2 和 Sysprep 所需代码，不含客户身份。
+1. **01-Prepare-And-Verify.cmd**：弹出管理员 UAC，检查并准备通用 OOBE 引导、
+   安装无客户注册身份的自动 SYSTEM 服务 VMO-GuestAgentV2，完成后检查状态。
+   请事先安装 Windows、VMware Tools 和系统级 Python 3.11+。
+2. **03-Check-Status.cmd**：只读检查 OOBE 文件、V2 SYSTEM 服务和身份是否为空。
+   如果失败，不能执行封装。此检查不能代替人工确认浏览器、应用或 Windows 凭据。
+3. **02-Verify-And-Seal.cmd**：再次执行检查；确认这是可抛弃的、未封装的 BUILD
+   Windows 虚拟机并审查所有账户凭据后，输入大写 SEAL，才真正调用
+   Sysprep /generalize /oobe /shutdown /mode:vm。正常成功后 BUILD 自动关机。
+   **关机后不要再次开机**，否则可能破坏封存状态。
 
-将整个工具包复制进 BUILD Windows，以管理员 PowerShell 在工具包根目录执行：
+**“在 OOBE 安装 Guest Agent”更准确的流程：** 在 BUILD VM 里提前安装身份为空的
+Guest Agent V2；正式客户机首次 OOBE 时由该服务读取独立 VMO_INIT ISO
+注册身份。任何注册 Token、agent.json、machine-binding.json 都不能预存在母版。
 
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\guest\Prepare-TemplateGuest.ps1" -ConfirmBuildClone
+### 发布与保护
 
-这一步先配置 specialize/oobeSystem、SetupComplete 和 FirstLogon 引导，
-再通过 guest_agent\Install-GuestAgentV2.ps1 -TemplateMode 安装自动运行的
-VMO-GuestAgentV2 SYSTEM 服务。此时不能包含 agent.json、machine-binding.json
-或任何客户 Token，服务运行但等待以后每台客户机唯一的 VMO_INIT ISO。
-这与「在 OOBE 阶段首次注册」不同：**Agent 通用程序在封装前安装，独立身份在克隆后首次 OOBE 注册。**
+Host 后台「黄金模板」可从 Windows ISO 创建 BUILD 或从已人工封存的模板 full clone。
+制作文件以 template_build\<BUILD名称> 为单位；同名已存在时拒绝覆盖。
+成功 Sysprep 关机后，在 VMware 中卸载 Windows 安装 ISO，确认无 .vmss/.lck
+或 VMX ISO 引用；从 Host 后台发布为 D:\VMware\Template\<BUILD名称> 的候选版，
+由管理员人工验收封存后再用于客户机。
 
-## 在 BUILD Windows 内：人工检查后执行 Sysprep
-
-人工检查 Windows、浏览器、软件账户和相关凭据，不执行旧版 DSH 数据检测脚本。
-随后在管理员 PowerShell 执行：
-
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\guest\Seal-Win10Template.ps1" -IAmOnDisposableClone -IReviewedAllAppAndWindowsCredentials -IUnderstandTheVmWillShutDown -UnattendedBootstrap
-
-脚本核验 OOBE 引导文件、Agent V2 自动 SYSTEM 服务且无已注册身份，
-调用 sysprep /generalize /oobe /shutdown /mode:vm。
-Sysprep 失败则检查 Sysprep\Panther 下日志；成功关机后不再启动该封存源。
-
-## 发布与首次客户部署
-
-在 VMware 中卸载 Windows 安装 ISO，确认 VMX 不再引用 ISO、没有挂起文件/锁。
-在后台点击「发布到正式模板候选库」，使用另一次 full clone 生成
-D:\VMware\Template\<BUILD名称>\<BUILD名称>.vmx；不会迁移或覆盖原始 BUILD、
-已登记正式模板、客户机或备份。状态初始为 CANDIDATE，需再人工封存确认。
-
-从正式模板创建一台测试客户机验证 OOBE。VMO Host 会按客户机生成独立
-随机初始密码、Agent 注册 Token、TLS CA 和 VMO_INIT ISO。
-首次启动 Windows 的 specialize、oobeSystem 和首次登录流程应当完成，
-预装的 Agent V2 会从 VMO_INIT ISO 自动读取该客户机注册配置。
-它注册并上报心跳后，只有已启用「自动推送全部客户机」的当前便携软件版本才会派发。
-全新 C:\dsh 软件首次安装默认不启动；升级已安装软件按原运行状态恢复。
-
-## 安全约束
-
-- 旧 D:\VMware\Template-Build 由管理员自行删除，程序绝不自动清理或迁移。
-- 已存在的 BUILD、Guest 导出文件或正式同名模板都拒绝覆盖。
-- Release ZIP 只打包 template_build 根目录下审核过的工具文件；
-  任何 BUILD 磁盘、制作文件、工具包导出、运行时身份都不能打包。
-- Windows/VMware/OOBE/Sysprep 的真实成功必须在宿主机和测试客户机实测，
-  代码检查与模拟测试不能替代。
+正式客户新建和重装时，OOBE 独立注册成功、上报新 Guest Agent V2 心跳后，
+仅自动推送那些已启用自动推送策略的当前便携软件版本；全新首装默认不启动。
+保留现有正式模板、VMware BUILDs、数据库、客户 VM、旧备份与业务软件。
+不要把 BUILD 磁盘、导出工具包和身份状态纳入 Release ZIP。
