@@ -39,6 +39,7 @@ from .admin_auth import AdminAuth, AdminLoginLocked
 from .cleanup import CleanupManager, CleanupError
 from .host_control import HostControl, HostControlError
 from .portable_catalog import PortableCatalog, PortableCatalogError, inspect_zip
+from .github_releases import GitHubReleaseUpdater, GitHubSourceError
 from .host_metrics import read_host_metrics
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$')
@@ -147,6 +148,7 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     store = TemplateStore(settings.db_path)
     fleet = FleetStore(settings.db_path)
     portable_catalog = PortableCatalog(settings.db_path)
+    github_updater=GitHubReleaseUpdater(portable_catalog, fleet)
     remote = RemoteStore(settings.db_path)
     agent_updates = AgentUpdateManager(settings.db_path, Path(__file__).resolve().parent.parent / "guest_agent")
     admin_auth = AdminAuth(settings.db_path, settings.admin_key, os.environ.get('VMO_BUSINESS_KEY',''))
@@ -155,8 +157,42 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
     vmrun = vmrun or Vmrun(settings.vmrun_path)
     secret_root = settings.db_path.parent / 'provision-secrets'
     runner = JobRunner(store, vmrun, secret_root, settings.admin_key)
-    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.59',
+    app = FastAPI(title='VMware Workstation Host Agent', version='1.4.60',
                   description='Local management of sealed templates and VMware Workstation VMs.')
+
+    # One checked, opt-in source poll per process. The Host already forbids
+    # multiple Uvicorn workers. No network traffic when no profiles opted in.
+    github_stop=threading.Event()
+    github_wake=threading.Event()
+    github_thread=None
+
+    def github_loop():
+        if github_stop.wait(30):
+            return
+        while not github_stop.is_set():
+            try:
+                github_updater.check_enabled()
+            except Exception:
+                # Each profile records a bounded last_error, and the next
+                # interval continues even when GitHub is temporarily offline.
+                pass
+            github_wake.wait(6*3600)
+            github_wake.clear()
+
+    @app.on_event('startup')
+    def github_source_startup():
+        nonlocal github_thread
+        github_stop.clear()
+        github_thread=threading.Thread(target=github_loop,
+            daemon=True,name='VMO-GitHub-Release-Poller')
+        github_thread.start()
+
+    @app.on_event('shutdown')
+    def github_source_shutdown():
+        github_stop.set()
+        github_wake.set()
+        if github_thread is not None:
+            github_thread.join(timeout=3)
 
     # UI session is an HttpOnly, SameSite=Strict cookie signed using a key derived
     # from the existing API secret. X-UI-CSRF is mandatory for state changes.
@@ -910,6 +946,34 @@ def create_app(settings: Settings | None = None, vmrun: Vmrun | None = None) -> 
                 'skipped':len(result['skipped']),
                 'note':('自动推送已开启：当前在线 Guest 将尝试一次；新上线客户机自动接收。'
                         if payload.enabled else '自动推送已关闭，尚未领取的自动任务已取消。')}
+
+    class GitHubSourceConfig(BaseModel):
+        url: str = Field(default='',max_length=220)
+        asset_name: str = Field(default='',max_length=180)
+        enabled: bool = False
+
+    @app.post('/api/fleet/portable/profiles/{profile_id}/github-source',
+              dependencies=[Depends(authorized)])
+    def set_portable_github_source(profile_id: str, payload: GitHubSourceConfig):
+        try:
+            profile=portable_catalog.configure_github(
+                profile_id,payload.url,payload.enabled,payload.asset_name)
+        except (PortableCatalogError,GitHubSourceError) as exc:
+            raise HTTPException(422,str(exc)) from exc
+        if payload.enabled:
+            github_wake.set()
+        return {'profile':profile,
+                'note':('已启用：启动后和每6小时自动检查 GitHub 正式 Release；'
+                        '仅当此软件还启用了客户端自动推送，才会自动下发 Guest。'
+                        if payload.enabled else '已保存仓库配置，自动版本检查已关闭。')}
+
+    @app.post('/api/fleet/portable/profiles/{profile_id}/github-check',
+              dependencies=[Depends(authorized)])
+    def check_portable_github_release(profile_id: str):
+        try:
+            return github_updater.check(profile_id,force=True)
+        except GitHubSourceError as exc:
+            raise HTTPException(409,str(exc)) from exc
 
     @app.post('/api/fleet/portable/packages', dependencies=[Depends(authorized)], status_code=201)
     async def upload_portable_package(
