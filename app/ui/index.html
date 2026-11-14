@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.59"></script>
+<script src="/ui/app-route-recover.js?v=1.4.60"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.59">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.60">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.59" defer></script>
+<script src="/ui/admin.js?v=1.4.60" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -144,7 +144,7 @@
           <div class="form-submit"><button type="submit" class="btn primary">上传并登记软件更新</button></div>
         </form>
         <div class="divider"></div>
-        <div class="panel-head"><div><h2>软件版本库与更新下发</h2><p>选择单台或符合条件的全部在线客户机更新。Guest Agent 需要 v2.0.25 以上；更新后恢复原先运行或关闭状态。</p></div></div>
+        <div class="panel-head"><div><h2>软件版本库、GitHub 更新源与下发</h2><p>先登记软件 ZIP 和启动文件，即可给此软件绑定公开 GitHub 仓库。开启后每 6 小时检查新的正式 Release；服务器校验通过后激活版本，并依照“自动推送全部客户机”开关决定是否下发。要求 Guest Agent v2.0.27+。</p></div></div>
         <div id="packageList" class="software-package-list"></div>
         <p class="muted" id="portableReleaseHint">版本包默认收起，点击软件名称展开可选择客户机、批量下发或删除。</p>
       </section>
@@ -170,6 +170,11 @@
       <section class="panel">
         <div class="panel-head"><div><h2>旧虚拟机重装备份 · 单独标记</h2><p>只列出成功重装、路径与数据库吻合且确认没有被 VMware 使用的旧备份。默认不选择，删除后不可恢复，原重装历史记录仍保留。</p></div></div>
         <div id="cleanupVMBackups" class="template-list"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>已缺失的历史重装备份记录</h2><p>目录已不存在、数据库仍保留成功重装历史；仅允许确认后将备份标记为“已核实缺失”。不删除文件、不清除重装审计、不释放磁盘空间。</p></div></div>
+        <div id="cleanupMissingRecords" class="template-list"></div>
+        <button id="cleanupAcknowledgeMissing" type="button" class="btn ghost">确认并标记选中的失效记录</button>
       </section>
       <section class="panel">
         <div class="panel-head"><div><h2>受保护或无法确认的文件</h2><p>这些项目不会出现在可删除列表中，建议人工排查。</p></div></div>
