@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script src="/ui/app-route-recover.js?v=1.4.63"></script>
+<script src="/ui/app-route-recover.js?v=1.4.64"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>VM Orchestrator · 本地管理控制台</title>
-<link rel="stylesheet" href="/ui/ui.css?v=1.4.63">
+<link rel="stylesheet" href="/ui/ui.css?v=1.4.64">
 
 
 
 
 
-<script src="/ui/admin.js?v=1.4.63" defer></script>
+<script src="/ui/admin.js?v=1.4.64" defer></script>
 </head>
 <body>
 <div class="shell" id="adminShell" hidden>
@@ -127,7 +127,7 @@
           <div class="form-submit"><button type="submit" class="btn primary">创建独立制作虚拟机</button></div>
         </form>
         <div id="templateBuildList" class="template-list"><p class="muted">暂无模板制作任务</p></div>
-        <p class="muted">宿主机制作工具：<code>template_build\Export-GuestToolkit.ps1</code>；导出工具包到程序内 template_build 后复制进 BUILD Windows；先运行 Prepare-TemplateGuest.ps1，再运行 Seal-Win10Template.ps1。</p>
+        <p class="muted">宿主机双击 <code>template_build\00-Export-GuestToolkit.cmd</code> 导出工具包；将整个工具包复制进 BUILD Windows，依次双击 01 准备、03 检查、02 封装。旧版本升级缺失入口会在后台启动时自动恢复。</p>
       </section>
       <section class="panel"><div class="panel-head"><div><h2>现有黄金模板</h2><p>已封存的模板才能完整克隆</p></div></div><div id="templateList" class="template-list"></div></section>
       <section class="panel"><div class="panel-head"><div><h2>扫描本地黄金模板</h2><p>自动寻找模板目录及其一级子目录内的 .vmx；只读扫描，不会自动修改或封存。</p></div><button class="btn ghost" id="scanTemplatesBtn" type="button">扫描模板目录</button></div><div id="discoveredTemplates" class="template-list"><p class="muted">点击「扫描模板目录」选择要登记的模板。</p></div></section>

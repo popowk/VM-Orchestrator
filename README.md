@@ -1,4 +1,4 @@
-# VM Orchestrator — 功能总览（v1.4.63）
+# VM Orchestrator — 功能总览（v1.4.64）
 
 VM Orchestrator 是基于 Windows + VMware Workstation Pro 的多客户虚拟机运营管理系统。正式发布包仅包含运行程序与必要安装/运维脚本；此文件为唯一的产品说明。
 
@@ -195,3 +195,8 @@ Guest Agent 软件自动推送按 vm_id + enrollment_agent_id + 当前软件包 
 ## v1.4.63 — 黄金模板制作目录与 OOBE/Agent/Sysprep 统一
 
 唯一制作目录为 `D:\VMware\VM-Orchestrator\template_build`（非默认安装时为当前程序根目录下 `template_build`），不再创建或依赖旧的独立宿主目录，旧目录由管理员自行删除。导出 `template_build/_GuestToolkit-v[VERSION]` 后，在 BUILD Windows 内通过 `guest/Prepare-TemplateGuest.ps1 -ConfirmBuildClone` 配置 OOBE 引导和无客户身份的 Guest Agent V2 系统服务，再人工核查并通过 `guest/Seal-Win10Template.ps1` 执行 Sysprep 关机。客户端首次 OOBE 从单台 VMO_INIT ISO 取得独立 Token 并注册，随后按原自动推送策略首次安装软件且默认不启动。Release 打包明确排除 BUILD VM 和导出工具包；原正式模板、历史任务与客户数据不受影响。详细操作见 `template_build/README.md`。
+
+
+## v1.4.64 — 黄金模板制作工具一键 CMD 与旧更新器漏装修复
+
+从 v1.4.62/v1.4.63 在线升级的旧更新器可能只同步 `scripts/`，未同步当时新增的 `template_build/`。新版 Host 启动时只补齐缺失的 `template_build/00-Export-GuestToolkit.cmd` 和 `template_build/Export-GuestToolkit.ps1` 入口（不覆盖已存在文件，也不碰 VMX/VMDK）。后台未启动时可在宿主机双击 `scripts/host/00-Export-GuestToolkit.cmd`。宿主机导出 `_GuestToolkit-v1.4.64` 后，将其复制到尚未封装的 Windows BUILD 虚拟机内，直接双击 `01-Prepare-And-Verify.cmd`、`03-Check-Status.cmd`，最后审查账户后双击 `02-Verify-And-Seal.cmd` 并键入 `SEAL` 才执行 Sysprep。工具包内以 `Agent/` + `Core/` 划分；不包含客户身份。原模板、BUILD 磁盘和客户数据保持不变。实机 OOBE/Service 安装及 Sysprep 仍需在 Windows VMware 测试机验收。

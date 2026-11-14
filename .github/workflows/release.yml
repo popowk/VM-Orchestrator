@@ -48,6 +48,49 @@ jobs:
           $obj = $result | ConvertFrom-Json
           if ($obj.running -ne $false -or $obj.count -ne 0) { throw 'Inspection misidentified a process' }
           Remove-Item -LiteralPath $folder -Recurse -Force
+      - name: Export golden-template Guest kit on Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $scripts = @(
+            'scripts/host/Export-GuestToolkit.ps1',
+            'scripts/guest/Run-TemplateStep.ps1',
+            'scripts/guest/Check-TemplateStatus.ps1',
+            'scripts/guest/Prepare-TemplateGuest.ps1'
+          )
+          foreach ($script in $scripts) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script).Path,[ref]$tokens,[ref]$errors
+            ) | Out-Null
+            if ($errors.Count) { throw "Invalid PowerShell source: $script" }
+          }
+          & $ps51 -NoLogo -NoProfile -ExecutionPolicy Bypass -File "scripts/host/Export-GuestToolkit.ps1"
+          if ($LASTEXITCODE -ne 0) { throw 'Host-side Guest kit export failed' }
+          $v = (Get-Content VERSION -Raw).Trim()
+          $kit = Join-Path 'template_build' ('_GuestToolkit-v'+$v)
+          foreach ($item in @('Agent\Install-GuestAgentV2.ps1',
+                              'Agent\agent_v2.py',
+                              'Core\Run-TemplateStep.ps1',
+                              'Core\Prepare-TemplateGuest.ps1',
+                              'Core\Check-TemplateStatus.ps1',
+                              '01-Prepare-And-Verify.cmd',
+                              '02-Verify-And-Seal.cmd',
+                              '03-Check-Status.cmd',
+                              'README-FIRST.txt')) {
+            if (-not (Test-Path (Join-Path $kit $item) -PathType Leaf)) {
+              throw "Exported Guest kit missing: $item"
+            }
+          }
+          foreach ($script in @('Core\Run-TemplateStep.ps1','Core\Check-TemplateStatus.ps1')) {
+            $tokens=$null; $errors=$null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path (Join-Path $kit $script)).Path,[ref]$tokens,[ref]$errors
+            ) | Out-Null
+            if ($errors.Count) { throw "Invalid exported Guest script: $script" }
+          }
+          Write-Host "PASS: $kit has runnable 01/02/03 CMD and separate Agent/Core sources"
   release:
     needs: windows-preflight
     runs-on: ubuntu-latest

@@ -61,7 +61,7 @@ if (Test-Path -LiteralPath (Join-Path $Target 'app\main.py') -PathType Leaf) {
         }
     }
     # template_build is a LIVE workspace. Back up script files, never VM disks.
-    $templateTools=@('README.md','Export-GuestToolkit.ps1')
+    $templateTools=@('README.md','Export-GuestToolkit.ps1','00-Export-GuestToolkit.cmd')
     foreach ($tool in $templateTools) {
         $srcTool=Join-Path (Join-Path $Target 'template_build') $tool
         if (Test-Path -LiteralPath $srcTool -PathType Leaf) {
@@ -87,7 +87,7 @@ Get-ChildItem -LiteralPath $source -Recurse -File -Force | ForEach-Object {
     # Whitelist ONLY source tools inside template_build; it contains live BUILD
     # VMDKs, exported Guest toolkits and possibly customer setup material.
     if ($relative -match '^(?i:template_build)[\\/]') {
-        if ($relative -notin @('template_build\README.md','template_build\Export-GuestToolkit.ps1')) { return }
+        if ($relative -notin @('template_build\README.md','template_build\Export-GuestToolkit.ps1','template_build\00-Export-GuestToolkit.cmd')) { return }
     }
     if ($relative -match '(?i)(^|[\\/])(__pycache__|tests|Guest-Agent-QuickFix)([\\/]|$)' -or
         $relative -match '(?i)\.(pyc|sqlite3|db|pem|pfx|key)$' -or

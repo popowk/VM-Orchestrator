@@ -14,10 +14,12 @@ class BuildLayoutTests(TestCase):
         self.assertEqual(settings.template_build_root,ROOT/'template_build')
 
     def test_export_identity_free_oobe_and_v2(self):
-        exporter=(ROOT/'template_build'/'Export-GuestToolkit.ps1').read_text(encoding='utf-8')
+        shim=(ROOT/'template_build'/'Export-GuestToolkit.ps1').read_text(encoding='utf-8')
+        exporter=(ROOT/'scripts'/'host'/'Export-GuestToolkit.ps1').read_text(encoding='utf-8')
         prepare=(ROOT/'scripts'/'guest'/'Prepare-TemplateGuest.ps1').read_text(encoding='utf-8')
         seal=(ROOT/'scripts'/'guest'/'Seal-Win10Template.ps1').read_text(encoding='utf-8')
-        self.assertIn('$DestinationRoot = $PSScriptRoot',exporter)
+        self.assertIn('scripts\\host\\Export-GuestToolkit.ps1',shim)
+        self.assertIn("Join-Path $projectRoot 'template_build'",exporter)
         self.assertNotIn("D:\\VMware\\Template-Build",exporter)
         self.assertIn('Prepare-TemplateGuest.ps1',exporter)
         self.assertNotIn('Inspect-Win10Template.ps1',exporter)
@@ -44,7 +46,7 @@ class BuildLayoutTests(TestCase):
 
     def test_host_updater_overlays_only_tools(self):
         updater=(ROOT/'scripts'/'host'/'Apply-GitHubUpdate.ps1').read_text(encoding='utf-8-sig')
-        self.assertIn("$templateToolFiles = @('README.md','Export-GuestToolkit.ps1')",updater)
+        self.assertIn("$templateToolFiles = @('README.md','Export-GuestToolkit.ps1','00-Export-GuestToolkit.cmd')",updater)
         self.assertIn("Join-Path $Target 'template_build'",updater)
         self.assertIn("foreach ($tool in $templateToolFiles)",updater)
         folders=next(line for line in updater.splitlines() if line.startswith('$folders ='))
@@ -55,5 +57,6 @@ class BuildLayoutTests(TestCase):
         installer=(ROOT/'Install-All.ps1').read_text(encoding='utf-8-sig')
         self.assertIn("template_build\\README.md",installer)
         self.assertIn("template_build\\Export-GuestToolkit.ps1",installer)
+        self.assertIn("template_build\\00-Export-GuestToolkit.cmd",installer)
         self.assertIn("if ($relative -match '^(?i:template_build)",installer)
         self.assertIn("if ($relative -notin",installer)

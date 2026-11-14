@@ -96,6 +96,51 @@ def iso_vmx(name: str, iso: Path, *, memory_mb: int, cpus: int) -> str:
         ''])
 
 
+def restore_missing_template_entrypoints(root: Path) -> None:
+    """Repair legacy-upgrader omission without touching VM disks or existing files.
+
+    VMO <=1.4.62 updater copies scripts/ but not the newly introduced
+    template_build/ directory. The new Host restores only two launcher files
+    when they are absent after startup, leaving all BUILDs and custom files as-is.
+    """
+    host_exporter = Path(__file__).resolve().parent.parent / 'scripts' / 'host' / 'Export-GuestToolkit.ps1'
+    if not host_exporter.is_file() or _is_reparse_point(root):
+        raise TemplateBuildError('无法安全初始化黄金模板制作工具，请确认 scripts/host/Export-GuestToolkit.ps1')
+    entrypoints = {
+        'Export-GuestToolkit.ps1': (
+            "# VMO compat launcher recovered on startup; no Guest operations on Host.\n"
+            "[CmdletBinding()]\nparam()\n$ErrorActionPreference='Stop'\n"
+            "$exporter=Join-Path (Split-Path -Parent $PSScriptRoot) "
+            "'scripts\\host\\Export-GuestToolkit.ps1'\n"
+            "if (-not (Test-Path -LiteralPath $exporter -PathType Leaf)) "
+            "{ throw 'Host exporter missing' }\n& $exporter\n"
+        ),
+        '00-Export-GuestToolkit.cmd': (
+            '@echo off\r\nsetlocal\r\n'
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass '
+            '-File "%~dp0Export-GuestToolkit.ps1"\r\n'
+            'set "RC=%ERRORLEVEL%"\r\n'
+            'if not "%RC%"=="0" echo [ERROR] Guest toolkit export failed: %RC%\r\n'
+            'pause\r\nexit /b %RC%\r\n'
+        ),
+    }
+    for name, content in entrypoints.items():
+        target = root / name
+        if target.is_symlink() or _is_reparse_point(target):
+            raise TemplateBuildError('模板工具入口不允许符号链接')
+        if target.exists():
+            if not target.is_file():
+                raise TemplateBuildError('模板工具入口被非文件占用')
+            continue
+        # Exclusive create means old files (including any concurrent repair)
+        # are never overwritten. No VMX/VMDK or Guest instance data is touched.
+        try:
+            with target.open('x', encoding='utf-8', newline='') as out:
+                out.write(content)
+        except FileExistsError:
+            pass
+
+
 class TemplateBuildManager:
     def __init__(self, root: Path, templates_root: Path, vms_root: Path,
                  db_path: Path, store, vmrun, executor):
@@ -112,6 +157,7 @@ class TemplateBuildManager:
         self.templates_root.mkdir(parents=True,exist_ok=True)
         if _is_reparse_point(self.root) or _is_reparse_point(self.templates_root):
             raise TemplateBuildError('模板目录不允许符号链接或 Windows Junction')
+        restore_missing_template_entrypoints(self.root)
         with self._db() as d:
             d.execute('''CREATE TABLE IF NOT EXISTS template_builds (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,

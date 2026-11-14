@@ -23,7 +23,7 @@ $ackFile = Join-Path $stateDir ('updater-ack-' + $Attempt + '.txt')
 $logFile = Join-Path $stateDir ('updater-' + $Attempt + '.log')
 $folders = @('app','guest_agent','scripts','integrations','docs')
 # template_build also contains live BUILD VMDKs. Only these two tool files can be updated.
-$templateToolFiles = @('README.md','Export-GuestToolkit.ps1')
+$templateToolFiles = @('README.md','Export-GuestToolkit.ps1','00-Export-GuestToolkit.cmd')
 $rootFiles = @('VERSION','Install-All.cmd','Install-All.ps1','Start-VM-Orchestrator.cmd',
                'Manage.cmd','Repair-Stuck-Update.cmd','Repair-Stuck-Update.ps1',
                'README.md','requirements.txt','.gitignore','.env.example','release-manifest.json')
