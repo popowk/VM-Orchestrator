@@ -1677,12 +1677,27 @@ window.VMOSelfService=(()=>{
 /* ===== cleanup center; never infer deletability from a directory name ===== */
 (function(){
  'use strict';
- let candidates=[],scanning=false,deleting=false;
+ let candidates=[],missingRecords=[],scanning=false,deleting=false;
  const fmt=n=>{const x=Number(n)||0;return x>=1073741824?(x/1073741824).toFixed(2)+' GB':
           x>=1048576?(x/1048576).toFixed(1)+' MB':x>=1024?(x/1024).toFixed(1)+' KB':x+' B';};
  const selected=()=>Array.from(document.querySelectorAll('.vmo-clean-select:checked')).map(c=>c.dataset.id);
  function render(data){
    candidates=data.items||[];
+   missingRecords=data.missing_records||[];
+   const missing=$('cleanupMissingRecords');
+   if(missing){
+     missing.replaceChildren();
+     for(const item of missingRecords){
+       const row=el('div','template-card'),label=el('label','check-row');
+       const input=document.createElement('input');input.type='checkbox';
+       input.className='vmo-missing-select';input.dataset.job=item.job_id;
+       label.append(input,el('strong','','历史备份缺失 · '+item.job_id));
+       row.append(label,el('small','',item.path),el('small','',item.reason));
+       missing.append(row);
+     }
+     if(!missing.childElementCount)
+       missing.append(el('p','muted','没有待核实的缺失备份记录。'));
+   }
    const out=$('cleanupProgramItems'),vms=$('cleanupVMBackups'),blocked=$('cleanupProtected');
    if(!out||!vms||!blocked)return;
    out.replaceChildren();vms.replaceChildren();blocked.replaceChildren();
@@ -1708,7 +1723,8 @@ window.VMOSelfService=(()=>{
    }
    if(!blocked.childElementCount)blocked.append(el('p','muted','没有需要人工处理的候选项目。'));
    $('cleanupSummary').textContent='可检查 '+candidates.length+' 项，合计 '+fmt(data.total_bytes)+
-       '；其中旧虚拟机备份 '+(data.reinstall_backups||0)+' 项，受保护 '+(data.protected_count||0)+' 项。勾选后才会删除。';
+       '；其中旧虚拟机备份 '+(data.reinstall_backups||0)+' 项，缺失记录 '+missingRecords.length+
+       ' 条，受保护 '+(data.protected_count||0)+' 项。缺失记录不占空间，确认后仅同步数据库状态。';
  }
  async function scan(){
    if(scanning||deleting)return;
@@ -1755,5 +1771,21 @@ window.VMOSelfService=(()=>{
      });
    });
    $('cleanupDeleteBtn')?.addEventListener('click',clean);
+   $('cleanupAcknowledgeMissing')?.addEventListener('click',async()=>{
+     if(scanning||deleting)return;
+     const ids=[...document.querySelectorAll('.vmo-missing-select:checked')]
+       .map(x=>x.dataset.job).filter(Boolean);
+     if(!ids.length)return toast('请勾选需要确认的缺失备份记录',true);
+     if(!confirm('将 '+ids.length+' 条已经不存在的历史备份标记为“已核实缺失”。\n不会删除任何虚拟机文件，不会清除重装历史，也不会释放磁盘空间。是否继续？'))return;
+     if(prompt('输入“确认备份缺失”以提交数据库状态：','')!=='确认备份缺失')return;
+     deleting=true;
+     try{
+       const result=await request('/api/system/cleanup/acknowledge-missing','POST',{
+         job_ids:ids,confirm_phrase:'确认备份缺失'});
+       toast('已核实 '+result.acknowledged.length+' 条失效备份记录，未删除任何文件');
+       await scanAfterDelete();
+     }catch(e){toast('失效记录同步失败：'+e.message,true);await scanAfterDelete();}
+     finally{deleting=false;}
+   });
  });
 })();
