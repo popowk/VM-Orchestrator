@@ -261,6 +261,58 @@ class CleanupManager:
                                                  '运行数据目录下的过期临时文件，需手动确认'))
                 except (OSError, CleanupError):
                     pass
+        # Approved portable ZIPs are a database-backed release catalog, NOT
+        # generic cache. Only non-active, fully unreferenced old packages are
+        # eligible for explicit, manual cleanup. Unknown files stay protected.
+        package_root = self.db_path.parent / 'approved_packages'
+        if package_root.is_dir() and not _is_reparse_point(package_root):
+            with self.fleet.db() as d:
+                packages=[dict(r) for r in d.execute(
+                    "SELECT id,product,version,sha256,bytes,filename,uploaded_at,deleted_at FROM update_packages")]
+                active={r[0] for r in d.execute(
+                    "SELECT active_package_id FROM portable_profiles WHERE active_package_id!=''")}
+                pending={r[0] for r in d.execute(
+                    "SELECT DISTINCT package_id FROM guest_tasks WHERE status IN ('QUEUED','CLAIMED','RUNNING','VERIFY_REQUIRED','UNKNOWN','TIMED_OUT')")}
+                linked=set()
+                if d.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='business_self_actions'").fetchone():
+                    linked={r[0] for r in d.execute(
+                        "SELECT DISTINCT package_id FROM business_self_actions WHERE package_id IS NOT NULL")}
+            known=set()
+            for pack in packages[:2000]:
+                identifier=pack['id']
+                if not re.fullmatch(r'[0-9a-f-]{36}',identifier):
+                    continue
+                path=package_root/(identifier+'.zip')
+                known.add(path.name)
+                if not path.exists():
+                    continue
+                reason=None
+                if pack['deleted_at']:
+                    reason='数据库已标记删除，但文件仍在；保留供管理员排查'
+                elif identifier in active:
+                    reason='当前生效软件版本，禁止清理'
+                elif identifier in pending:
+                    reason='更新任务仍在使用该版本，禁止清理'
+                elif identifier in linked:
+                    reason='客户自助操作仍引用该版本，禁止清理'
+                elif not pack['product'].startswith('portable-p-'):
+                    reason='不是已登记的便携软件 ZIP，禁止清理'
+                if reason:
+                    protected.append({'path':str(path),'reason':reason})
+                    continue
+                try:
+                    item=_file_entry('package:'+identifier,'old_software_package',
+                        '历史软件版本 · '+pack['product']+' · '+pack['version'],
+                        path,self.root,True,
+                        '当前未生效且无进行中任务和客户自助操作引用；确认后保留更新审计记录')
+                    if item['bytes']!=pack['bytes']:
+                        raise CleanupError('软件 ZIP 文件大小与数据库记录不一致')
+                    items.append(item)
+                except (OSError,CleanupError) as exc:
+                    protected.append({'path':str(path),'reason':'软件文件校验未通过：'+str(exc)[:160]})
+            for entry in list(package_root.iterdir())[:2000]:
+                if entry.is_file() and entry.name not in known:
+                    protected.append({'path':str(entry),'reason':'没有可验证的软件包数据库关联，禁止自动删除'})
         backup_root = self.vms_root / '.vmo-reinstall-backups'
         if backup_root.is_dir() and not _is_reparse_point(backup_root):
             with self.fleet.db() as d:
@@ -364,6 +416,8 @@ class CleanupManager:
                 raise CleanupError('Cleanup preview is stale; rescan before deleting')
             if item['kind'] == 'reinstall_backup' and not confirm_backups:
                 raise CleanupError('Old VM backups require separate explicit confirmation')
+            if item['kind']=='old_software_package' and not obj.get('confirm_software'):
+                raise CleanupError('历史软件 ZIP 必须单独确认；不能当作普通缓存批量删除')
             targets.append(item)
         done = []
         for item in targets:
@@ -372,7 +426,28 @@ class CleanupManager:
             if not live or live['fingerprint'] != item['fingerprint']:
                 raise CleanupError('File changed during cleanup; stopped')
             path = Path(item['path'])
-            if item['kind'] in ('old_log', 'update_artifact', 'program_extra', 'data_cache'):
+            if item['kind']=='old_software_package':
+                # Use the catalog's tombstoning API; it revalidates database
+                # references inside a transaction and preserves task history.
+                identifier=item['id'].split(':',1)[1]
+                _guard_file(path,self.root)
+                with self.fleet.db() as d:
+                    meta=d.execute("SELECT sha256,bytes FROM update_packages WHERE id=? AND deleted_at IS NULL",
+                                   (identifier,)).fetchone()
+                if not meta or path.stat().st_size!=meta['bytes']:
+                    raise CleanupError('软件包元数据发生变化，停止清理')
+                digest=hashlib.sha256()
+                with path.open('rb') as stream:
+                    for chunk in iter(lambda:stream.read(1024*1024),b''):
+                        digest.update(chunk)
+                if digest.hexdigest().lower()!=meta['sha256'].lower():
+                    raise CleanupError('软件 ZIP SHA-256 不匹配，拒绝删除')
+                from .fleet import FleetError
+                try:
+                    self.fleet.delete_package(identifier)
+                except FleetError as exc:
+                    raise CleanupError(str(exc)) from exc
+            elif item['kind'] in ('old_log', 'update_artifact', 'program_extra', 'data_cache'):
                 _guard_file(path, self.root)
                 path.unlink()
             else:
