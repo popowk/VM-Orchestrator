@@ -1,6 +1,7 @@
 # VMO host-side GOLDEN IMAGE toolkit exporter. Never overwrites old kits or VMs.
 [CmdletBinding()]
-param([string]$DestinationRoot = 'D:\VMware\Template-Build')
+param()
+$DestinationRoot = $PSScriptRoot
 $ErrorActionPreference='Stop'
 $sourceRoot=Split-Path -Parent $PSScriptRoot
 $version=(Get-Content -LiteralPath (Join-Path $sourceRoot 'VERSION') -Raw -Encoding UTF8).Trim()
@@ -23,9 +24,15 @@ $agent=Join-Path $dest 'guest_agent'
 New-Item -ItemType Directory -Path $guest,$agent -ErrorAction Stop | Out-Null
 # Only release-shipped tools: never runtime app data, .dsh profiles,
 # enrolled customer secrets, browser sessions or account databases.
-Get-ChildItem -LiteralPath $guestSource -File | Where-Object {
-    $_.Extension -in @('.ps1','.cmd','.bat','.xml','.md')
-} | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $guest -ErrorAction Stop }
+# Only active OOBE/Guest V2/Sysprep tools; no legacy DSH data audit.
+$guestFiles=@('Install-OOBE-Bootstrap.ps1','Apply-PerCloneOOBE.ps1',
+    'Finalize-OOBE.ps1','FirstLogon-OOBE.ps1','Get-OOBE-Status.ps1',
+    'Prepare-TemplateGuest.ps1','Seal-Win10Template.ps1')
+foreach ($file in $guestFiles) {
+    $source=Join-Path $guestSource $file
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing guest tool: $file" }
+    Copy-Item -LiteralPath $source -Destination $guest -ErrorAction Stop
+}
 Get-ChildItem -LiteralPath $agentSource -File | Where-Object {
     $_.Extension -in @('.py','.ps1','.cmd','.json','.txt')
     -and $_.Name -notmatch '(?i)^(config\.json|credentials\.json|.*\.secret)$'
@@ -33,13 +40,16 @@ Get-ChildItem -LiteralPath $agentSource -File | Where-Object {
 $note=@'
 Independent VMO Golden Template Guest Kit
 1. Copy this toolkit to the disposable Windows BUILD VM only.
-2. In BUILD VM, run guest\Install-OOBE-Bootstrap.ps1 -ConfirmBuildClone as Administrator.
-3. Configure Windows and inspect all account, application and browser secrets.
-4. Run guest\Seal-Win10Template.ps1 with all required acknowledgement switches
-   and -UnattendedBootstrap. Windows Sysprep must shut it down.
-5. Do not start the sealed BUILD VM again. Remove installation ISO mount.
-6. In Host management console, publish it as a fresh official template CANDIDATE.
-7. Manually attest sealing in Host before assigning to customer VMs.
+2. Install Windows, VMware Tools and system-wide Python 3.11+ in the BUILD VM.
+3. As Administrator run guest\Prepare-TemplateGuest.ps1 -ConfirmBuildClone
+   (installs OOBE bootstrap and Guest Agent V2 in identity-free TemplateMode).
+4. Review Windows and application identities manually; do not embed credentials.
+5. Run guest\Seal-Win10Template.ps1 -IAmOnDisposableClone
+   -IReviewedAllAppAndWindowsCredentials -IUnderstandTheVmWillShutDown
+   -UnattendedBootstrap. Windows Sysprep must shut it down.
+6. Do not start the sealed BUILD VM again. Remove installation ISO mount.
+7. In Host management console, publish it as a fresh official template CANDIDATE.
+8. Manually attest sealing in Host before assigning to customer VMs.
 New customer applications are sent AFTER a new Guest Agent enrolls, not
 preinstalled into a golden template with production customer credentials.
 '@
