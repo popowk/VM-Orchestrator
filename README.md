@@ -200,3 +200,8 @@ Guest Agent 软件自动推送按 vm_id + enrollment_agent_id + 当前软件包 
 ## v1.4.64 — 黄金模板制作工具一键 CMD 与旧更新器漏装修复
 
 从 v1.4.62/v1.4.63 在线升级的旧更新器可能只同步 `scripts/`，未同步当时新增的 `template_build/`。新版 Host 启动时只补齐缺失的 `template_build/00-Export-GuestToolkit.cmd` 和 `template_build/Export-GuestToolkit.ps1` 入口（不覆盖已存在文件，也不碰 VMX/VMDK）。后台未启动时可在宿主机双击 `scripts/host/00-Export-GuestToolkit.cmd`。宿主机导出 `_GuestToolkit-v1.4.64` 后，将其复制到尚未封装的 Windows BUILD 虚拟机内，直接双击 `01-Prepare-And-Verify.cmd`、`03-Check-Status.cmd`，最后审查账户后双击 `02-Verify-And-Seal.cmd` 并键入 `SEAL` 才执行 Sysprep。工具包内以 `Agent/` + `Core/` 划分；不包含客户身份。原模板、BUILD 磁盘和客户数据保持不变。实机 OOBE/Service 安装及 Sysprep 仍需在 Windows VMware 测试机验收。
+
+
+## v1.4.65 — GitHub Release 轮询锁修复与时区显示
+
+修复任意其他软件的 Release ZIP 下载导致「立即检查并验证」报「已有软件 Release 检查正在运行」：后台任务改为每个软件档案独立串行，不同软件可同时校验，同一个软件仍禁止重复下载与重复发布。人工检查同一软件遇到后台执行时短暂等待，若检查尚未完成则返回 `checking` 状态而非失败，不清除原有的最近检查结果与标签。界面显示正在检查并自动刷新，SQLite 存储的 UTC 时间转换为北京时间展示，避免将已过去的旧版本检查时间误当刚刚检查。无需修改原 GitHub 更新源、历史 ZIP 和自动推送设置，所有客户数据与发布记录保留。版本真实性仍以官方 GitHub Release 及 ZIP 安全校验结果为准。
