@@ -41,6 +41,12 @@ if ($UnattendedBootstrap) {
     if ('specialize' -notin $passes -or 'oobeSystem' -notin $passes) {
         throw 'OOBE answer is missing specialize or oobeSystem pass.'
     }
+    $ns=New-Object System.Xml.XmlNamespaceManager($unattend.NameTable)
+    $ns.AddNamespace('u','urn:schemas-microsoft-com:unattend')
+    $account=$unattend.SelectSingleNode("/u:unattend/u:settings[@pass='oobeSystem']/u:component[@name='Microsoft-Windows-Shell-Setup']/u:AutoLogon/u:Username",$ns)
+    if (-not $account -or $account.InnerText -ne 'Administrator') {
+        throw 'OOBE bootstrap must target the built-in Administrator account.'
+    }
     $state=Join-Path $env:ProgramFiles 'VM-Orchestrator\GuestAgent\state'
     foreach ($name in @('agent.json','machine-binding.json')) {
         if (Test-Path -LiteralPath (Join-Path $state $name)) {
