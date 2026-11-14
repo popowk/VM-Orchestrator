@@ -20,7 +20,13 @@ NAME = f'VM-Orchestrator-v{VERSION}.zip'
 EXCLUDES = {'.git', '.github', 'tools', 'tests', 'data', 'dist', '__pycache__', '.venv', 'reports'}
 SECRETS = {'.env'}
 
+TEMPLATE_TOOLS = {'README.md', 'Export-GuestToolkit.ps1'}
+
 def excluded(rel: Path):
+    # This workspace also holds BUILD VM disks and exported kits.
+    # Never ship those even without a Git checkout.
+    if rel.parts and rel.parts[0] == 'template_build':
+        return len(rel.parts) != 2 or rel.name not in TEMPLATE_TOOLS
     return (any(x in EXCLUDES for x in rel.parts) or
             rel.name in SECRETS or rel.name.startswith('backup-before-') or
             rel.suffix.lower() in {'.pyc', '.pfx', '.key', '.pem', '.sqlite3', '.db', '.log'} or
