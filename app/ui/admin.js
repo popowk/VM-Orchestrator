@@ -558,6 +558,56 @@ function renderFleet(){
      };
      autoRow.append(auto,autoText);
      body.append(autoRow,el('p','muted','同一软件只保留一个当前生效的 ZIP 发布版本；历史版本仅供审计。'));
+     const github=el('div','software-github-source');
+     github.append(el('strong','','GitHub 正式 Release 更新源'));
+     const urlLabel=el('label','','仓库地址（公开 github.com/所有者/仓库）');
+     const repoInput=el('input');repoInput.type='url';repoInput.maxLength=220;
+     repoInput.value=profile.github_repo||'';
+     repoInput.placeholder='https://github.com/popowk/dsh-fish-soul-bridage';
+     urlLabel.append(repoInput);
+     const assetLabel=el('label','','ZIP 文件名（可留空自动选择唯一 ZIP）');
+     const assetInput=el('input');assetInput.maxLength=180;assetInput.value=profile.github_asset||'';
+     assetInput.placeholder='可留空，或填写 Release 中确切的 ZIP 名称';
+     assetLabel.append(assetInput);
+     const enabledRow=el('label','software-auto-control');
+     const githubEnabled=document.createElement('input');githubEnabled.type='checkbox';
+     githubEnabled.checked=Boolean(profile.github_enabled);
+     enabledRow.append(githubEnabled,el('span','','开启自动检查最新正式 Release（每6小时）'));
+     const status=el('p','muted','最近检查：'+(profile.github_last_checked||'未检查')+
+       (profile.github_last_tag?' · '+profile.github_last_tag:'')+
+       (profile.github_last_error?' · 失败：'+profile.github_last_error:
+         profile.github_last_result?' · '+profile.github_last_result:''));
+     const actions=el('div','software-release-actions');
+     const save=btn('保存更新源','ghost small',async()=>{
+       if(githubEnabled.checked&&!repoInput.value.trim())
+         return toast('请先输入 GitHub 公开仓库地址',true);
+       if(githubEnabled.checked&&!confirm('自动检查会定期下载并验证 GitHub 正式 ZIP，然后替换服务器当前生效版本。\n若“自动推送全部客户机”也已打开，验证成功后还会给在线客户机下发新版本。确定开启？'))return;
+       save.disabled=true;
+       try{
+         const result=await request('/api/fleet/portable/profiles/'+encodeURIComponent(profile.id)+
+           '/github-source','POST',{url:repoInput.value.trim(),
+             asset_name:assetInput.value.trim(),enabled:githubEnabled.checked});
+         toast(result.note);save.blur();await refresh();
+       }catch(error){toast('更新源保存失败：'+error.message,true)}
+       finally{save.disabled=false;}
+     });
+     const check=btn('立即检查并验证','primary small',async()=>{
+       if(!confirm('立即检查新正式 Release？校验成功后会更新服务器生效包，并按已开启的自动推送策略下发。'))return;
+       check.disabled=true;status.textContent='正在下载和校验 GitHub Release…';
+       try{
+         const result=await request('/api/fleet/portable/profiles/'+encodeURIComponent(profile.id)+
+           '/github-check','POST',{});
+         status.textContent=(result.state==='published'?'发布成功':'当前无新版本')+
+           ' · '+(result.tag||'')+
+           (result.state==='published'?' · 已排队 '+(result.auto_queued||0)+' 台':'');
+         toast(status.textContent);check.blur();await refresh();
+       }catch(error){status.textContent='检查失败：'+error.message;toast(status.textContent,true)}
+       finally{check.disabled=false;}
+     });
+     actions.append(save,check);
+     github.append(urlLabel,assetLabel,enabledRow,actions,status);
+     body.append(github);
+
      const controls=el('div','software-release-actions');
      const select=el('select');select.setAttribute('aria-label','选择单台或全部客户机');
      select.append(new Option('请选择单台或全部',''));
